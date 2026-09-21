@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI인터시스 AI 사무실</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">AI</span>
+      <div>
+        <h1>AIINTERSYS AI OFFICE</h1>
+        <p>Claude 에이전트 팀이 일하는 가상 사무실</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="mode-switch" role="radiogroup" aria-label="실행 모드">
+        <button type="button" data-mode="demo" class="active" role="radio" aria-checked="true">데모</button>
+        <button type="button" data-mode="live" role="radio" aria-checked="false">실제 AI</button>
+      </div>
+      <div class="meter" title="이번 작업의 예상 API 비용">
+        <span class="meter-label">비용</span>
+        <span id="cost">$0.000</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="office-wrap" aria-label="사무실">
+      <div class="office3d" id="office3d">
+        <div class="hud">
+          <button type="button" data-view="front">정면</button>
+          <button type="button" data-view="top">위에서</button>
+          <button type="button" data-view="side">측면</button>
+          <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </section>
+
+    <aside class="panel">
+      <form class="task-form" id="taskForm">
+        <label for="task">팀에게 맡길 업무</label>
+        <textarea id="task" rows="4" placeholder="예) 중소기업을 위한 생성형 AI 도입 제안서를 써줘"></textarea>
+        <div class="examples" id="examples"></div>
+        <div class="form-row">
+          <span class="mode-hint" id="modeHint">데모: 정해진 대본으로 흐름만 보여줍니다</span>
+          <button type="button" id="cancelBtn" class="btn-ghost" hidden>중단</button>
+          <button type="submit" id="submitBtn" class="btn-primary">업무 지시</button>
+        </div>
+      </form>
+
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab active" data-tab="feed" aria-selected="true">업무 흐름</button>
+        <button type="button" role="tab" class="tab" data-tab="result" aria-selected="false">최종 결과 <span class="dot" id="resultDot" hidden></span></button>
+      </div>
+      <div class="tab-panel" id="feed" role="tabpanel">
+        <p class="empty">업무를 지시하면 팀장이 일을 나누고, 팀원들이 협업하는 과정이 여기에 기록됩니다.</p>
+      </div>
+      <div class="tab-panel markdown" id="result" role="tabpanel" hidden>
+        <p class="empty">아직 결과가 없습니다.</p>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="agentDialog" class="agent-dialog">
+    <div class="dialog-head">
+      <div id="dialogTitle"></div>
+      <button type="button" class="btn-ghost" id="dialogClose" aria-label="닫기">✕</button>
+    </div>
+    <div id="dialogBody" class="dialog-body"></div>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

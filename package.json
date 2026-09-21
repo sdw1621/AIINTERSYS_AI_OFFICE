@@ -1,0 +1,19 @@
+{
+  "name": "aiintersys-ai-office",
+  "version": "0.1.0",
+  "description": "AI인터시스 멀티에이전트 사무실 - Claude 에이전트 팀이 가상 사무실에서 협업하는 모습을 보여주는 웹앱",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
+    "express": "^5.2.1"
+  }
+}
