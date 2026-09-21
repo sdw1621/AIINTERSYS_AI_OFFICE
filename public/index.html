@@ -31,15 +31,13 @@
 
   <main class="layout">
     <section class="office-wrap" aria-label="사무실">
-      <div class="office" id="office">
-        <div class="room room-manager"><span>팀장실</span></div>
-        <div class="room room-meeting"><span>회의 테이블</span></div>
-        <div class="plant p1">🪴</div>
-        <div class="plant p2">🪴</div>
-        <div class="coffee">☕</div>
-        <div class="window w1"></div>
-        <div class="window w2"></div>
-        <!-- 책상과 에이전트는 app.js에서 생성 -->
+      <div class="office3d" id="office3d">
+        <div class="hud">
+          <button type="button" data-view="front">정면</button>
+          <button type="button" data-view="top">위에서</button>
+          <button type="button" data-view="side">측면</button>
+          <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
+        </div>
       </div>
       <div class="legend" id="legend"></div>
     </section>
@@ -79,6 +77,14 @@
 
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
   <script src="app.js" type="module"></script>
 </body>
 </html>

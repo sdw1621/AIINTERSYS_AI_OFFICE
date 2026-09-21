@@ -1,5 +1,6 @@
 // 사무실 구성원 정의. desk 좌표는 사무실 평면도(0~100%) 기준이다.
 // photo는 public/avatars/ 아래 AI로 생성한 가상 인물 사진이다 (실존 인물 아님).
+// look은 3D 사무실 캐릭터의 외형(머리 모양·색, 옷 색)으로, 사진과 비슷하게 맞췄다.
 
 export const MANAGER_ID = "manager";
 
@@ -12,6 +13,7 @@ export const AGENTS = [
     age: 45,
     emoji: "🧑‍💼",
     photo: "avatars/manager.jpg",
+    look: { hair: "short", hairColor: "#2b2b2e", outfit: "#1f2a44", shirt: "#ffffff", pants: "#1c2233" },
     color: "#1E40AF",
     desk: { x: 50, y: 21 },
     summary: "업무를 쪼개 팀원에게 맡기고, 결과를 모아 최종 보고서를 씁니다.",
@@ -28,6 +30,7 @@ export const AGENTS = [
     age: 29,
     emoji: "🔎",
     photo: "avatars/researcher.jpg",
+    look: { hair: "bob", hairColor: "#1b1717", outfit: "#d9c7a7", shirt: "#ffffff", pants: "#3b4252", glasses: true },
     color: "#0EA5E9",
     desk: { x: 18, y: 50 },
     summary: "웹 검색으로 사실·통계·사례를 조사하고 출처와 함께 정리합니다.",
@@ -44,8 +47,9 @@ export const AGENTS = [
     age: 34,
     emoji: "🧭",
     photo: "avatars/planner.jpg",
+    look: { hair: "short", hairColor: "#161616", outfit: "#3a3d44", shirt: "#f5f5f5", pants: "#2a2d33" },
     color: "#8B5CF6",
-    desk: { x: 40, y: 72 },
+    desk: { x: 39, y: 72 },
     summary: "목표·대상·구조를 설계하고 실행 계획과 우선순위를 잡습니다.",
     career: "IT 스타트업 서비스 기획 8년, 신사업 TF 리드",
     personality: "에너지가 넘치고 구조화에 강하다. 복잡한 문제를 3가지로 줄여 말한다.",
@@ -60,8 +64,9 @@ export const AGENTS = [
     age: 31,
     emoji: "✍️",
     photo: "avatars/writer.jpg",
+    look: { hair: "long", hairColor: "#4a2e22", outfit: "#efe6d6", shirt: "#efe6d6", pants: "#6b5a4b" },
     color: "#F59E0B",
-    desk: { x: 62, y: 72 },
+    desk: { x: 61, y: 72 },
     summary: "조사와 기획을 바탕으로 읽기 좋은 문서·카피를 작성합니다.",
     career: "광고 카피라이터 5년, B2B 콘텐츠 에디터 3년",
     personality: "독자 입장에서 생각한다. 어려운 말을 쉬운 문장으로 바꾸는 데 능하다.",
@@ -76,6 +81,7 @@ export const AGENTS = [
     age: 38,
     emoji: "🧐",
     photo: "avatars/reviewer.jpg",
+    look: { hair: "pony", hairColor: "#141414", outfit: "#1f4d3a", shirt: "#ffffff", pants: "#22262e" },
     color: "#10B981",
     desk: { x: 82, y: 50 },
     summary: "사실 오류·논리 비약·누락을 찾아 구체적인 수정안을 제시합니다.",

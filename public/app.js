@@ -1,7 +1,9 @@
-// AI 사무실 화면: 서버에서 오는 이벤트(SSE)를 받아 캐릭터 이동·말풍선·업무 기록으로 보여준다.
+// AI 사무실 화면: 서버에서 오는 이벤트(SSE)를 받아 3D 사무실의 캐릭터 이동·말풍선과 업무 기록으로 보여준다.
+
+import { Office3D } from "./office3d.js";
 
 const $ = (sel) => document.querySelector(sel);
-const office = $("#office");
+let office; // Office3D
 const feed = $("#feed");
 const resultEl = $("#result");
 
@@ -21,7 +23,7 @@ const EXAMPLES = [
   "2026년 국내 AI 에이전트 시장 동향을 조사해서 1페이지로 요약해줘",
 ];
 
-const agents = new Map(); // id → { def, desk, avatar, bubble, home, queue, calls, bubbleKind, bubbleText, hideTimer }
+const agents = new Map(); // id → { def, state, calls, bubbleKind, bubbleText, hideTimer }
 let mode = "demo";
 let liveAvailable = false;
 let currentJob = null;
@@ -35,7 +37,15 @@ init();
 async function init() {
   const config = await fetch("/api/config").then((r) => r.json());
   liveAvailable = config.liveAvailable;
+  try {
+    office = new Office3D($("#office3d"), { onSelect: openAgentDialog });
+  } catch (err) {
+    console.error(err);
+    $("#office3d").innerHTML = `<p class="office-error">이 브라우저에서는 3D 화면(WebGL)을 표시할 수 없습니다. 업무 기록과 결과는 오른쪽에서 확인할 수 있어요.</p>`;
+    office = null;
+  }
   for (const def of config.agents) buildAgent(def);
+  setupViewButtons();
   buildLegend();
   buildExamples();
   setupMode(config);
@@ -49,41 +59,21 @@ async function init() {
 }
 
 function buildAgent(def) {
-  const desk = document.createElement("div");
-  desk.className = "desk";
-  desk.dataset.state = "idle";
-  desk.style.left = def.desk.x + "%";
-  desk.style.top = def.desk.y + "%";
-  desk.innerHTML = `<div class="monitor"></div>
-    <div class="nameplate"><span class="state-dot"></span>${def.name}<span class="title">${def.title}</span><span class="state-label">${STATE_LABEL.idle}</span></div>`;
-  desk.title = `${def.name} ${def.title} · ${def.summary}`;
+  agents.set(def.id, { def, state: "idle", calls: [], bubbleKind: null, bubbleText: "" });
+  office?.addAgent(def);
+}
 
-  const home = { x: def.desk.x, y: def.desk.y - 11 };
-  const avatar = document.createElement("div");
-  avatar.className = "avatar";
-  avatar.style.setProperty("--c", def.color);
-  avatar.innerHTML = `${face(def)}<span class="carry"></span>`;
-  avatar.title = `${def.name} ${def.title} (${def.role})`;
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  // 위쪽 끝에 있는 캐릭터는 말풍선이 잘리지 않도록 아래에 띄운다
-  const below = home.y < 25;
-
-  office.append(desk, avatar, bubble);
-  const agent = { def, desk, avatar, bubble, home, below, queue: Promise.resolve(), calls: [], bubbleKind: null, bubbleText: "" };
-  agents.set(def.id, agent);
-  place(agent, home.x, home.y, 0);
-
-  const open = () => openAgentDialog(def.id);
-  desk.addEventListener("click", open);
-  avatar.addEventListener("click", open);
+function setupViewButtons() {
+  for (const btn of document.querySelectorAll("[data-view]")) {
+    btn.addEventListener("click", () => office?.resetView(btn.dataset.view));
+  }
+  $("#autoRotate").addEventListener("change", (e) => office?.setAutoRotate(e.target.checked));
 }
 
 function buildLegend() {
   $("#legend").innerHTML = ["thinking", "searching", "working", "waiting", "done"]
     .map((s) => `<span data-state="${s}"><span class="state-dot"></span>${STATE_LABEL[s]}</span>`)
-    .join("") + `<span>· 책상이나 캐릭터를 누르면 그 팀원의 작업 기록을 볼 수 있어요</span>`;
+    .join("") + `<span>· 드래그로 회전, 휠로 확대 · 사람이나 이름표를 누르면 프로필과 작업 기록</span>`;
 }
 
 function buildExamples() {
@@ -286,7 +276,7 @@ function handle(ev) {
 
     case "job_error":
       addEntry({ kind: "error", icon: "⚠️", html: escapeHtml(ev.message) });
-      for (const x of agents.values()) if (x.desk.dataset.state !== "idle") setState(x.def.id, "idle");
+      for (const x of agents.values()) if (x.state !== "idle") setState(x.def.id, "idle");
       finish();
       break;
   }
@@ -309,44 +299,13 @@ function flushManagerSpeech() {
 function setState(id, state) {
   const a = agents.get(id);
   if (!a) return;
-  a.desk.dataset.state = state;
-  a.desk.querySelector(".state-label").textContent = STATE_LABEL[state] || state;
+  a.state = state;
+  office?.setState(id, state);
 }
 
-function place(a, x, y, ms) {
-  for (const el of [a.avatar, a.bubble]) {
-    el.style.setProperty("--walk", ms + "ms");
-    el.style.left = x + "%";
-    el.style.top = y + "%";
-  }
-  a.pos = { x, y };
-}
-
-function walk(a, x, y) {
-  const dist = Math.hypot(x - a.pos.x, (y - a.pos.y) * 0.7);
-  const ms = Math.max(500, dist * 28);
-  a.avatar.classList.add("walking");
-  place(a, x, y, ms);
-  return sleep(ms).then(() => a.avatar.classList.remove("walking"));
-}
-
-// 한 캐릭터의 이동은 순서대로(큐) 처리한다. 팀장이 여러 팀원에게 동시에 지시하면 차례로 방문한다.
+// 한 캐릭터의 이동은 Office3D가 순서대로(큐) 처리한다. 팀장이 여러 팀원에게 동시에 지시하면 차례로 방문한다.
 function visit(fromId, toId, carry) {
-  const a = agents.get(fromId);
-  const target = agents.get(toId);
-  const side = target.def.desk.x < 50 ? 1 : -1;
-  const tx = target.def.desk.x + side * 11;
-  const ty = target.def.desk.y + (toId === "manager" ? 6 : -2);
-  const job = a.queue.then(async () => {
-    a.avatar.querySelector(".carry").textContent = carry;
-    a.avatar.classList.add("carrying");
-    await walk(a, tx, ty);
-    a.avatar.classList.remove("carrying");
-    await sleep(650);
-    await walk(a, a.home.x, a.home.y);
-  });
-  a.queue = job;
-  return job;
+  return office ? office.visit(fromId, toId, carry) : Promise.resolve();
 }
 
 function speak(a, kind, delta) {
@@ -359,14 +318,13 @@ function speak(a, kind, delta) {
 function showBubble(a, kind, text) {
   clearTimeout(a.hideTimer);
   a.bubbleKind = kind;
-  a.bubble.className = `bubble show ${kind}${a.below ? " below" : ""}`;
-  a.bubble.textContent = text;
+  office?.showBubble(a.def.id, kind, text);
 }
 
 function hideBubble(a, delay) {
   clearTimeout(a.hideTimer);
   a.hideTimer = setTimeout(() => {
-    a.bubble.classList.remove("show");
+    office?.hideBubble(a.def.id);
     a.bubbleKind = null;
     a.bubbleText = "";
   }, delay);
@@ -447,10 +405,6 @@ function face(def) {
 function fullName(id) {
   const d = agents.get(id).def;
   return `${d.name} ${d.title}`;
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 function firstLine(text) {

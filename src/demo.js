@@ -14,7 +14,7 @@ async function type(job, ctx, kind, agent, text, speed = 18) {
 
 async function worker(job, ctx, agent, callId, instruction, { thinking, searches = [], result }) {
   job.emit("delegate", { from: "manager", to: agent, callId, instruction });
-  await sleep(2200); // 팀장이 걸어와 지시를 전달하는 시간
+  await sleep(3000); // 팀장이 걸어와 지시를 전달하는 시간
   job.emit("status", { agent, state: "thinking" });
   await type(job, ctx, "thinking", agent, thinking, 22);
   for (const q of searches) {
