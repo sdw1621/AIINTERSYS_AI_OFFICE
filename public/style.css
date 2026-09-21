@@ -130,7 +130,7 @@ button { font: inherit; cursor: pointer; }
 
 /* ── 캐릭터 ───────────────────────── */
 .avatar {
-  position: absolute; transform: translate(-50%, -50%); z-index: 5; width: clamp(38px, 4.6vw, 54px); aspect-ratio: 1;
+  position: absolute; transform: translate(-50%, -50%); z-index: 5; width: clamp(44px, 5.4vw, 64px); aspect-ratio: 1;
   border-radius: 50%; background: var(--surface); border: 3px solid var(--c, var(--brand));
   display: grid; place-items: center; font-size: clamp(18px, 2.3vw, 27px); box-shadow: 0 6px 14px rgba(0,0,0,0.18);
   transition: left var(--walk, 1.2s) cubic-bezier(.45,.05,.35,1), top var(--walk, 1.2s) cubic-bezier(.45,.05,.35,1);
@@ -231,10 +231,24 @@ textarea:focus { outline: 2px solid var(--brand-2); outline-offset: 1px; }
   *, *::before, *::after { animation: none !important; transition-duration: 0.01ms !important; }
 }
 
+/* ── 인물 사진 · 프로필 ──────────────── */
+.face { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+.avatar { overflow: visible; background: var(--surface); }
+.nameplate .title { font-weight: 500; font-size: 11px; color: var(--text); opacity: 0.75; margin-left: -2px; }
+.entry .icon { overflow: hidden; }
+.entry .icon .face { border-radius: 50%; }
+.profile { display: flex; gap: 14px; align-items: center; }
+.profile-photo { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; border: 3px solid var(--c); flex: none; }
+.profile .title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.role-tag { font-size: 11.5px; font-weight: 600; color: #fff; background: var(--c); padding: 2px 8px; border-radius: 999px; }
+.profile .sub { margin-top: 3px; }
+.profile .motto { margin-top: 5px; font-size: 12.5px; font-style: italic; color: var(--brand-2); }
+
 /* ── 좁은 화면: 이름표가 겹치지 않도록 상태 글자는 숨기고 점 색으로만 표시 ── */
 @media (max-width: 600px) {
   .office { aspect-ratio: 1 / 1; border-width: 6px; }
   .desk .nameplate { font-size: 10.5px; padding: 2px 7px; bottom: -26px; gap: 4px; }
-  .nameplate .state-label { display: none; }
+  .nameplate .state-label, .nameplate .title { display: none; }
+  .profile-photo { width: 60px; height: 60px; }
   .bubble { max-width: 46vw; font-size: 11px; }
 }

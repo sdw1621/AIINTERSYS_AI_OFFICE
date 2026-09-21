@@ -55,15 +55,15 @@ function buildAgent(def) {
   desk.style.left = def.desk.x + "%";
   desk.style.top = def.desk.y + "%";
   desk.innerHTML = `<div class="monitor"></div>
-    <div class="nameplate"><span class="state-dot"></span>${def.name}<span class="state-label">${STATE_LABEL.idle}</span></div>`;
-  desk.title = `${def.role} · ${def.summary}`;
+    <div class="nameplate"><span class="state-dot"></span>${def.name}<span class="title">${def.title}</span><span class="state-label">${STATE_LABEL.idle}</span></div>`;
+  desk.title = `${def.name} ${def.title} · ${def.summary}`;
 
   const home = { x: def.desk.x, y: def.desk.y - 11 };
   const avatar = document.createElement("div");
   avatar.className = "avatar";
   avatar.style.setProperty("--c", def.color);
-  avatar.innerHTML = `${def.emoji}<span class="carry"></span>`;
-  avatar.title = `${def.name} (${def.role})`;
+  avatar.innerHTML = `${face(def)}<span class="carry"></span>`;
+  avatar.title = `${def.name} ${def.title} (${def.role})`;
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
@@ -231,7 +231,7 @@ function handle(ev) {
     case "search": {
       a.calls.at(-1)?.searches.push(ev.query);
       showBubble(a, "search", ev.query ? `"${ev.query}" 검색 중` : "웹 검색 중");
-      addEntry({ agent: a, html: `<span class="who">${a.def.name}</span><span class="meta">웹 검색</span><div>🔍 ${escapeHtml(ev.query || "(검색어 확인 중)")}</div>` });
+      addEntry({ agent: a, html: `<span class="who">${fullName(ev.agent)}</span><span class="meta">웹 검색</span><div>🔍 ${escapeHtml(ev.query || "(검색어 확인 중)")}</div>` });
       break;
     }
 
@@ -242,7 +242,7 @@ function handle(ev) {
       to.calls.push(call);
       addEntry({
         agent: agents.get("manager"),
-        html: `<span class="who">김팀장 → ${to.def.name}</span><span class="meta">업무 지시</span>
+        html: `<span class="who">${fullName("manager")} → ${fullName(ev.to)}</span><span class="meta">업무 지시</span>
           <div>${escapeHtml(firstLine(ev.instruction))}</div>
           <details><summary>지시 전문 보기</summary><pre>${escapeHtml(ev.instruction)}</pre></details>`,
       });
@@ -261,7 +261,7 @@ function handle(ev) {
       hideBubble(from, 0);
       addEntry({
         agent: from,
-        html: `<span class="who">${from.def.name} → 김팀장</span><span class="meta">결과 보고 · ${ev.text.length.toLocaleString()}자</span>
+        html: `<span class="who">${fullName(ev.from)} → ${fullName("manager")}</span><span class="meta">결과 보고 · ${ev.text.length.toLocaleString()}자</span>
           <details><summary>보고 내용 보기</summary><pre>${escapeHtml(ev.text)}</pre></details>`,
       });
       visit(ev.from, "manager", "📄");
@@ -273,7 +273,7 @@ function handle(ev) {
       break;
 
     case "notice":
-      addEntry({ kind: "notice", icon: "ℹ️", html: (a ? `<span class="who">${a.def.name}</span> ` : "") + escapeHtml(ev.message) });
+      addEntry({ kind: "notice", icon: "ℹ️", html: (a ? `<span class="who">${fullName(ev.agent)}</span> ` : "") + escapeHtml(ev.message) });
       break;
 
     case "job_done":
@@ -302,7 +302,7 @@ function flushManagerSpeech() {
   const text = managerSpeech.trim();
   managerSpeech = "";
   if (!text) return;
-  addEntry({ agent: agents.get("manager"), html: `<span class="who">김팀장</span><div>${escapeHtml(text)}</div>` });
+  addEntry({ agent: agents.get("manager"), html: `<span class="who">${fullName("manager")}</span><div>${escapeHtml(text)}</div>` });
 }
 
 // ── 캐릭터 표현 ──────────────────────────
@@ -378,7 +378,7 @@ function addEntry({ agent, icon, html, kind = "" }) {
   const el = document.createElement("div");
   el.className = `entry ${kind}`;
   if (agent) el.style.setProperty("--c", agent.def.color);
-  el.innerHTML = `<div class="icon">${agent ? agent.def.emoji : icon}</div><div class="body">${html}</div>`;
+  el.innerHTML = `<div class="icon">${agent ? face(agent.def) : icon}</div><div class="body">${html}</div>`;
   const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
   feed.append(el);
   if (nearBottom) feed.scrollTop = feed.scrollHeight;
@@ -409,7 +409,16 @@ function renderResult(md) {
 
 function openAgentDialog(id) {
   const a = agents.get(id);
-  $("#dialogTitle").innerHTML = `<div class="title">${a.def.emoji} ${a.def.name} · ${a.def.role}</div><div class="sub">${escapeHtml(a.def.summary)}</div>`;
+  const d = a.def;
+  $("#dialogTitle").innerHTML = `<div class="profile">
+      <img class="profile-photo" src="${d.photo}" alt="${d.name} 프로필 사진" style="--c:${d.color}" />
+      <div>
+        <div class="title">${d.name} ${d.title} <span class="role-tag" style="--c:${d.color}">${d.role}</span></div>
+        <div class="sub">${d.age}세 · ${escapeHtml(d.career)}</div>
+        <div class="sub">${escapeHtml(d.personality)}</div>
+        <div class="motto">“${escapeHtml(d.motto)}”</div>
+      </div>
+    </div>`;
   const body = $("#dialogBody");
   if (!a.calls.length) {
     body.innerHTML = `<p class="empty">아직 맡은 업무가 없습니다.</p>`;
@@ -430,6 +439,16 @@ function openAgentDialog(id) {
 }
 
 // ── 유틸 ────────────────────────────────
+// AI로 생성한 가상 인물 사진. 이미지를 못 불러오면 이모지로 대신한다.
+function face(def) {
+  return `<img class="face" src="${def.photo}" alt="${def.name}" onerror="this.replaceWith(document.createTextNode('${def.emoji}'))" />`;
+}
+
+function fullName(id) {
+  const d = agents.get(id).def;
+  return `${d.name} ${d.title}`;
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

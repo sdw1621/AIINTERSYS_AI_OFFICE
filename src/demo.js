@@ -82,7 +82,7 @@ export async function runDemoJob(job) {
   job.emit("status", { agent: "manager", state: "thinking" });
   await type(job, ctx, "thinking", "manager", "검토 의견을 반영해 최종본을 정리하자.");
   job.emit("status", { agent: "manager", state: "working" });
-  const final = `## 최종 보고\n\n${draft}\n\n> **검토 반영**: 기대효과에 "반복 업무 30% 절감" 목표를 추가하고, 파일럿 성공 기준(사용률·만족도·절감 시간)을 정의합니다.\n\n### 팀 작업 요약\n- 🔎 이리서처: 동향·수치·사례 조사\n- 🧭 박기획: 4단 문서 구조 설계\n- ✍️ 최작가: 초안 작성 / 🧐 정검토: 개선점 2건 제시`;
+  const final = `## 최종 보고\n\n${draft}\n\n> **검토 반영**: 기대효과에 "반복 업무 30% 절감" 목표를 추가하고, 파일럿 성공 기준(사용률·만족도·절감 시간)을 정의합니다.\n\n### 팀 작업 요약\n- 이서연 선임연구원: 동향·수치·사례 조사\n- 박준호 책임: 4단 문서 구조 설계\n- 최하은 에디터: 초안 작성 / 정유진 수석: 개선점 2건 제시`;
   await type(job, ctx, "text", "manager", final, 6);
   usage("manager");
   job.emit("status", { agent: "manager", state: "done" });
