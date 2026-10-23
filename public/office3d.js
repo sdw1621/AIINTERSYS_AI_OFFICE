@@ -66,6 +66,23 @@ function mesh(geometry, material, { x = 0, y = 0, z = 0, cast = true, receive = 
 const box = (w, h, d, material, pos, radius = 0) =>
   mesh(radius ? new RoundedBoxGeometry(w, h, d, 3, radius) : new THREE.BoxGeometry(w, h, d), material, pos);
 
+// 바닥 러그용 둥근 사각형 (XY 평면 → 눕혀서 사용)
+function roundedRect(w, h, r) {
+  const s = new THREE.Shape();
+  const x = -w / 2;
+  const y = -h / 2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r);
+  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return new THREE.ShapeGeometry(s, 10);
+}
+
 // 선분 A→B가 회의 테이블과 부딪히면 테이블을 돌아가는 경유점을 넣는다
 function avoidTable(points) {
   const out = [points[0]];
@@ -92,13 +109,15 @@ export class Office3D {
     this.agents = new Map();
     this.clock = new THREE.Clock();
     this.tmp = new THREE.Vector3();
+    this.active = true;
+    this.view = "iso";
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.08;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.append(this.renderer.domElement);
 
@@ -107,22 +126,24 @@ export class Office3D {
     container.append(this.labels.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x0b1220, 30, 60);
+    this.scene.background = this.makeSky();
 
-    this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 120);
+    // 아이소메트릭(비스듬히 내려다보는) 느낌을 위해 원근 없는 직교 카메라를 쓴다
+    this.camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 200);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.minDistance = 7;
-    this.controls.maxDistance = 32;
-    this.controls.minPolarAngle = 0.25;
-    this.controls.maxPolarAngle = 1.32;
-    this.controls.autoRotateSpeed = 0.6;
-    this.resetView();
+    this.controls.minZoom = 0.75;
+    this.controls.maxZoom = 3.5;
+    this.controls.minPolarAngle = 0.15;
+    this.controls.maxPolarAngle = 1.3;
+    this.controls.autoRotateSpeed = 0.5;
+    this.resetView("iso");
 
     this.buildLights();
     this.buildRoom();
     this.buildManagerRoom();
     this.buildMeetingArea();
+    this.buildZones();
     this.buildDecor();
     this.setupPicking();
 
@@ -131,15 +152,21 @@ export class Office3D {
     this.renderer.setAnimationLoop(() => this.tick());
   }
 
-  resetView(preset = "front") {
+  // 시점 프리셋: 입체(아이소) / 정면 / 위에서
+  resetView(preset = "iso") {
     const views = {
-      front: { pos: [0, 11.5, 14.5], target: [0, 0.4, -0.4] },
-      top: { pos: [0, 24, 0.01], target: [0, 0, 0] },
-      side: { pos: [15, 8, 9], target: [0, 0.5, -0.5] },
+      iso: { dir: [1, 1.08, 1.12], fit: { h: 14.5, w: 26 } },
+      front: { dir: [0, 1, 1.25], fit: { h: 15, w: 21.5 } },
+      top: { dir: [0.0001, 1, 0.0001], fit: { h: 15.5, w: 21 } },
     };
-    const v = views[preset] || views.front;
-    this.camera.position.set(...v.pos);
-    this.controls.target.set(...v.target);
+    const v = views[preset] || views.iso;
+    this.view = preset in views ? preset : "iso";
+    this.fit = v.fit;
+    const d = new THREE.Vector3(...v.dir).normalize().multiplyScalar(60);
+    this.controls.target.set(0, 0, 0.3);
+    this.camera.position.copy(this.controls.target).add(d);
+    this.camera.zoom = 1;
+    this.applyFrustum();
     this.controls.update();
   }
 
@@ -147,58 +174,131 @@ export class Office3D {
     this.controls.autoRotate = on;
   }
 
+  // 다른 화면에 있을 때는 그리기를 멈춘다 (캐릭터 이동 계산은 계속)
+  setActive(on) {
+    this.active = on;
+    if (on) this.resize();
+  }
+
   resize() {
     const { clientWidth: w, clientHeight: h } = this.container;
     if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.labels.setSize(w, h);
-    this.camera.aspect = w / h;
-    // 세로로 긴 화면(휴대폰)에서도 사무실 좌우가 잘리지 않도록 가로 시야각을 유지한다
-    const baseV = THREE.MathUtils.degToRad(36);
-    const refAspect = 1.6;
-    const hfov = 2 * Math.atan(Math.tan(baseV / 2) * refAspect);
-    const vfov = w / h < refAspect ? 2 * Math.atan(Math.tan(hfov / 2) / (w / h)) : baseV;
-    this.camera.fov = Math.min(THREE.MathUtils.radToDeg(vfov), 80);
+    this.applyFrustum();
+  }
+
+  // 화면 비율이 달라도(휴대폰 세로 화면 포함) 사무실 전체가 들어오도록 직교 카메라 범위를 맞춘다
+  applyFrustum() {
+    const { clientWidth: w, clientHeight: h } = this.container;
+    const aspect = w && h ? w / h : 1.6;
+    // 세로로 좁은 화면에서는 가장자리를 조금 잘라내더라도 사람이 크게 보이도록 더 당겨서 본다
+    const fitW = aspect < 1.1 ? this.fit.w * 0.74 : this.fit.w;
+    const height = Math.max(this.fit.h, fitW / aspect);
+    const width = height * aspect;
+    Object.assign(this.camera, { left: -width / 2, right: width / 2, top: height / 2, bottom: -height / 2 });
     this.camera.updateProjectionMatrix();
   }
 
-  // ── 조명 ────────────────────────────────
-  buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xfff8ee, 0x6b5a48, 1.1));
-    const sun = new THREE.DirectionalLight(0xfff1dc, 2.1);
-    sun.position.set(6, 12, 7);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 9, bottom: -9, near: 1, far: 40 });
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 0.02;
-    this.scene.add(sun);
-    // 창문 쪽에서 들어오는 푸른 빛
-    const windowLight = new THREE.PointLight(0x9cc8ff, 12, 14, 1.6);
-    windowLight.position.set(5.5, 2.2, -5.6);
-    this.scene.add(windowLight);
-    const warm = new THREE.PointLight(0xffc98a, 10, 12, 1.8);
-    warm.position.set(-6, 2.6, 4.5);
-    this.scene.add(warm);
+  // ── 노을 하늘 + 도시 스카이라인 (화면 배경) ──
+  makeSky() {
+    const tex = canvasTexture(1024, 1024, (g, w, h) => {
+      const sky = g.createLinearGradient(0, 0, 0, h);
+      sky.addColorStop(0, "#2b2154");
+      sky.addColorStop(0.2, "#5a3a86");
+      sky.addColorStop(0.38, "#b2558a");
+      sky.addColorStop(0.52, "#f0806c");
+      sky.addColorStop(0.66, "#fbb072");
+      sky.addColorStop(1, "#fcd9a2");
+      g.fillStyle = sky;
+      g.fillRect(0, 0, w, h);
+      // 해와 빛 번짐
+      const sun = g.createRadialGradient(w * 0.82, h * 0.5, 10, w * 0.82, h * 0.5, w * 0.45);
+      sun.addColorStop(0, "rgba(255,236,190,0.95)");
+      sun.addColorStop(0.08, "rgba(255,214,150,0.75)");
+      sun.addColorStop(0.35, "rgba(255,170,110,0.25)");
+      sun.addColorStop(1, "rgba(255,150,100,0)");
+      g.fillStyle = sun;
+      g.fillRect(0, 0, w, h);
+      // 별 몇 개
+      g.fillStyle = "rgba(255,255,255,0.7)";
+      for (let i = 0; i < 70; i++) {
+        const x = (i * 197) % w;
+        const y = (i * 83) % (h * 0.2);
+        g.fillRect(x, y, i % 5 === 0 ? 2 : 1, i % 5 === 0 ? 2 : 1);
+      }
+      // 빌딩 실루엣: 먼 층 → 가까운 층
+      const layers = [
+        { base: 0.5, min: 0.06, max: 0.2, color: "rgba(150,86,140,0.5)", lit: 0.1 },
+        { base: 0.6, min: 0.08, max: 0.28, color: "rgba(92,56,116,0.78)", lit: 0.2 },
+        { base: 0.72, min: 0.1, max: 0.34, color: "rgba(48,32,78,0.95)", lit: 0.32 },
+      ];
+      layers.forEach((L, li) => {
+        let x = -20;
+        let i = li * 7;
+        while (x < w) {
+          const bw = 26 + ((i * 37 + li * 11) % 54);
+          const bh = h * (L.min + (((i * 53 + li * 29) % 100) / 100) * (L.max - L.min));
+          const top = h * L.base - bh;
+          g.fillStyle = L.color;
+          g.fillRect(x, top, bw, h - top);
+          if (i % 4 === 0) g.fillRect(x + bw / 2 - 1, top - 14, 2, 14); // 안테나
+          for (let wy = top + 6; wy < h * L.base + 40; wy += 9) {
+            for (let wx = x + 4; wx < x + bw - 4; wx += 7) {
+              if (((wx * 7 + wy * 13 + i) % 100) / 100 < L.lit) {
+                g.fillStyle = (wx + wy) % 3 ? "rgba(255,214,140,0.85)" : "rgba(255,240,200,0.9)";
+                g.fillRect(wx, wy, 3, 4);
+              }
+            }
+          }
+          x += bw + 2 + ((i * 17) % 6);
+          i++;
+        }
+      });
+      // 지평선 아래 도시 불빛 안개
+      const haze = g.createLinearGradient(0, h * 0.78, 0, h);
+      haze.addColorStop(0, "rgba(40,28,70,0.0)");
+      haze.addColorStop(1, "rgba(40,28,70,0.75)");
+      g.fillStyle = haze;
+      g.fillRect(0, h * 0.78, w, h * 0.22);
+    });
+    return tex;
   }
 
-  // ── 바닥 · 벽 · 창문 ────────────────────
+  // ── 조명: 해 질 녘 금빛 ───────────────────
+  buildLights() {
+    this.scene.add(new THREE.HemisphereLight(0xffe2cc, 0x6b4a7a, 1.15));
+    const sun = new THREE.DirectionalLight(0xffbe86, 2.6);
+    sun.position.set(11, 10, -7);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 12, bottom: -12, near: 1, far: 50 });
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.03;
+    this.scene.add(sun);
+    // 앞쪽에서 들어오는 은은한 보랏빛 보조광 (그림자 쪽이 너무 어둡지 않게)
+    const fill = new THREE.DirectionalLight(0xd9c8ff, 0.7);
+    fill.position.set(-6, 8, 12);
+    this.scene.add(fill);
+  }
+
+  // ── 옥상 사무실 바닥 · 유리 난간 · 기둥 ──────
   buildRoom() {
     const floorTex = canvasTexture(512, 512, (g, w, h) => {
-      g.fillStyle = "#b98d63";
+      g.fillStyle = "#d9a06a";
       g.fillRect(0, 0, w, h);
       const plankH = 64;
       for (let row = 0; row < h / plankH; row++) {
         let x = -((row * 173) % 300);
         while (x < w) {
           const len = 220 + ((row * 97 + x) % 160);
-          const l = 56 + ((row * 31 + x * 7) % 7);
-          g.fillStyle = `hsl(30, 34%, ${l}%)`;
+          const l = 66 + ((row * 31 + x * 7) % 7);
+          g.fillStyle = `hsl(29, 62%, ${l}%)`;
           g.fillRect(x + 1, row * plankH + 1, len - 2, plankH - 2);
-          g.strokeStyle = "rgba(90,55,30,0.12)";
-          for (let k = 0; k < 5; k++) {
+          g.strokeStyle = "rgba(150,95,50,0.10)";
+          for (let k = 0; k < 4; k++) {
             g.beginPath();
-            const yy = row * plankH + 8 + k * 11;
+            const yy = row * plankH + 10 + k * 13;
             g.moveTo(x + 4, yy);
             g.bezierCurveTo(x + len * 0.3, yy + 3, x + len * 0.6, yy - 3, x + len - 4, yy + 1);
             g.stroke();
@@ -206,85 +306,54 @@ export class Office3D {
           x += len;
         }
       }
-    }, [ROOM_W / 2.2, ROOM_D / 2.2]);
-    const floor = mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), mat(0xffffff, { map: floorTex, roughness: 0.55 }), { cast: false });
+    }, [ROOM_W / 2.4, ROOM_D / 2.4]);
+    const floor = mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), mat(0xffffff, { map: floorTex, roughness: 0.6 }), { cast: false });
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
 
-    // 사무실 바깥 바닥(받침)
-    const base = box(ROOM_W + 0.6, 0.3, ROOM_D + 0.6, mat(0x2a3346), { y: -0.16 });
-    base.castShadow = false;
-    this.scene.add(base);
+    // 공중에 떠 있는 듯한 두꺼운 바닥판
+    const slab = box(ROOM_W + 0.9, 0.7, ROOM_D + 0.9, mat(0xf4ece1, { roughness: 0.8 }), { y: -0.36 }, 0.18);
+    slab.castShadow = false;
+    this.scene.add(slab);
+    // 바닥 가장자리 테두리 (바닥면보다 살짝 아래)
+    this.scene.add(box(ROOM_W + 0.5, 0.06, ROOM_D + 0.5, mat(0xd8c3a8), { y: -0.045 }));
 
-    const wallMat = mat(0xe9e4dc, { roughness: 0.9 });
-    const backZ = -ROOM_D / 2;
-    // 뒷벽은 창문 자리를 비워두고 조각으로 만든다
-    const winY0 = 0.9;
-    const winY1 = 2.5;
-    const windows = [
-      [-8.2, -3.6], // 왼쪽 창 (x 시작, x 끝)
-      [3.6, 8.2],
-    ];
-    const addBack = (x0, x1, y0, y1) =>
-      this.scene.add(box(x1 - x0, y1 - y0, 0.2, wallMat, { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: backZ - 0.1 }));
-    addBack(-ROOM_W / 2, ROOM_W / 2, 0, winY0);
-    addBack(-ROOM_W / 2, ROOM_W / 2, winY1, WALL_H);
-    let cursor = -ROOM_W / 2;
-    for (const [x0, x1] of windows) {
-      addBack(cursor, x0, winY0, winY1);
-      cursor = x1;
-    }
-    addBack(cursor, ROOM_W / 2, winY0, winY1);
+    // 뒤쪽·왼쪽 가장자리 유리 난간 (카메라 쪽은 열어 둔다)
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0xe0f2fe, transparent: true, opacity: 0.22, roughness: 0.05, transmission: 0.5, depthWrite: false });
+    const rail = mat(0xe5e7eb, { metalness: 0.6, roughness: 0.3 });
+    const H = 1.15;
+    const backZ = -ROOM_D / 2 - 0.1;
+    const leftX = -ROOM_W / 2 - 0.1;
+    const run = (len, cx, cz, rotY) => {
+      const pane = mesh(new THREE.BoxGeometry(len, H, 0.03), glass, { x: cx, y: H / 2 + 0.02, z: cz, cast: false });
+      pane.rotation.y = rotY;
+      this.scene.add(pane);
+      const top = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 10), rail, { x: cx, y: H + 0.03, z: cz });
+      top.rotation.z = Math.PI / 2;
+      top.rotation.y = rotY;
+      this.scene.add(top);
+    };
+    run(ROOM_W, 0, backZ, 0);
+    run(ROOM_D, leftX, 0, Math.PI / 2);
+    for (let x = -ROOM_W / 2; x <= ROOM_W / 2 + 0.01; x += ROOM_W / 8) this.scene.add(box(0.06, H, 0.06, rail, { x, y: H / 2, z: backZ }));
+    for (let z = -ROOM_D / 2; z <= ROOM_D / 2 + 0.01; z += ROOM_D / 6) this.scene.add(box(0.06, H, 0.06, rail, { x: leftX, y: H / 2, z }));
 
-    const skyline = canvasTexture(1024, 256, (g, w, h) => {
-      const sky = g.createLinearGradient(0, 0, 0, h);
-      sky.addColorStop(0, "#7fb3ff");
-      sky.addColorStop(1, "#d8ecff");
-      g.fillStyle = sky;
-      g.fillRect(0, 0, w, h);
-      let x = 0;
-      let i = 0;
-      while (x < w) {
-        const bw = 40 + ((i * 37) % 60);
-        const bh = 60 + ((i * 53) % 150);
-        g.fillStyle = `rgba(${60 + (i % 3) * 15}, ${90 + (i % 4) * 10}, 140, 0.55)`;
-        g.fillRect(x, h - bh, bw, bh);
-        g.fillStyle = "rgba(255,255,255,0.35)";
-        for (let wy = h - bh + 8; wy < h - 6; wy += 14) for (let wx = x + 6; wx < x + bw - 6; wx += 12) g.fillRect(wx, wy, 5, 7);
-        x += bw + 4;
-        i++;
-      }
-    });
-    for (const [x0, x1] of windows) {
-      const glass = mesh(new THREE.PlaneGeometry(x1 - x0, winY1 - winY0), new THREE.MeshBasicMaterial({ map: skyline, toneMapped: false }), {
-        x: (x0 + x1) / 2, y: (winY0 + winY1) / 2, z: backZ - 0.12, cast: false,
-      });
-      this.scene.add(glass);
-      const frameMat = mat(0x3b4252, { metalness: 0.4, roughness: 0.4 });
-      for (let k = 0; k <= 3; k++) {
-        const fx = x0 + ((x1 - x0) * k) / 3;
-        this.scene.add(box(0.06, winY1 - winY0, 0.12, frameMat, { x: fx, y: (winY0 + winY1) / 2, z: backZ - 0.05 }));
-      }
-      this.scene.add(box(x1 - x0, 0.08, 0.3, frameMat, { x: (x0 + x1) / 2, y: winY0, z: backZ + 0.02 }));
+    // 흰 기둥
+    const pillar = mat(0xf8f4ee, { roughness: 0.6 });
+    for (const [x, z] of [[-ROOM_W / 2 + 0.35, -ROOM_D / 2 + 0.35], [ROOM_W / 2 - 0.35, -ROOM_D / 2 + 0.35], [-ROOM_W / 2 + 0.35, ROOM_D / 2 - 0.35]]) {
+      this.scene.add(mesh(new THREE.CylinderGeometry(0.32, 0.32, 3.4, 28), pillar, { x, y: 1.7, z }));
+      this.scene.add(mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.12, 28), mat(0xe7dccd), { x, y: 0.06, z }));
     }
-
-    // 좌우 벽 (앞쪽은 카메라를 위해 열어 둔다)
-    for (const sx of [-1, 1]) {
-      this.scene.add(box(0.2, WALL_H, ROOM_D, wallMat, { x: sx * (ROOM_W / 2 + 0.1), y: WALL_H / 2, z: 0 }));
-      // 걸레받이
-      this.scene.add(box(0.04, 0.12, ROOM_D, mat(0x5b4636), { x: sx * (ROOM_W / 2 - 0.02), y: 0.06, z: 0 }));
-    }
-    this.scene.add(box(ROOM_W, 0.12, 0.04, mat(0x5b4636), { y: 0.06, z: backZ + 0.02 }));
   }
 
-  // ── 팀장실: 유리 벽 + 회사 로고 ───────────
+  // ── 팀장실: 유리 벽 + 로고 벽 + 책장 ────────
   buildManagerRoom() {
     const { x0, x1, z0, z1, door } = MANAGER_ROOM;
     const glass = new THREE.MeshPhysicalMaterial({
-      color: 0xdbeafe, transparent: true, opacity: 0.18, roughness: 0.05, metalness: 0, transmission: 0.6, depthWrite: false,
+      color: 0xfff1e0, transparent: true, opacity: 0.16, roughness: 0.05, metalness: 0, transmission: 0.6, depthWrite: false,
     });
-    const frame = mat(0x334155, { metalness: 0.5, roughness: 0.35 });
-    const h = 2.4;
+    const frame = mat(0xb08a62, { roughness: 0.5 });
+    const h = 2.2;
     const pane = (len, x, z, rotY) => {
       const g = mesh(new THREE.BoxGeometry(len, h, 0.04), glass, { x, y: h / 2, z, cast: false });
       g.rotation.y = rotY;
@@ -304,7 +373,13 @@ export class Office3D {
     pane(side, door + side / 2, z1, 0);
     for (const px of [x0, x1, -door, door]) this.scene.add(box(0.08, h, 0.08, frame, { x: px, y: h / 2, z: z1 }));
 
-    // 로고 사인
+    // 나무 루버 벽 + 로고
+    const wallW = x1 - x0 + 0.2;
+    const wall = new THREE.Group();
+    wall.add(box(wallW, 2.9, 0.16, mat(0xf6efe6, { roughness: 0.9 }), { y: 1.45 }));
+    for (let i = 0; i < 26; i++) {
+      wall.add(box(0.09, 2.9, 0.06, mat(i % 2 ? 0xc79a6b : 0xb98a5e, { roughness: 0.7 }), { x: -wallW / 2 + 0.12 + i * ((wallW - 0.24) / 25), y: 1.45, z: 0.1 }));
+    }
     const logo = canvasTexture(1024, 320, (g, w, hh) => {
       const grad = g.createLinearGradient(0, 0, w, 0);
       grad.addColorStop(0, "#1e40af");
@@ -320,76 +395,135 @@ export class Office3D {
       g.fillStyle = "#bfdbfe";
       g.fillText("A I   O F F I C E", w / 2, hh * 0.78);
     });
-    const sign = mesh(new THREE.PlaneGeometry(3.2, 1), new THREE.MeshStandardMaterial({ map: logo, emissive: 0xffffff, emissiveMap: logo, emissiveIntensity: 0.35 }), {
-      y: 2.05, z: z0 + 0.02, cast: false,
+    const sign = mesh(new THREE.PlaneGeometry(3, 0.94), new THREE.MeshStandardMaterial({ map: logo, emissive: 0xffffff, emissiveMap: logo, emissiveIntensity: 0.45 }), {
+      y: 2.15, z: 0.14, cast: false,
     });
-    this.scene.add(sign);
+    wall.add(sign);
+    wall.position.set(0, 0, z0 - 0.02);
+    this.scene.add(wall);
+
     // 팀장실 러그
-    const rug = mesh(new THREE.PlaneGeometry(x1 - x0 - 0.6, depth - 0.8), mat(0x1e3a8a, { roughness: 1 }), { y: 0.005, z: (z0 + z1) / 2 + 0.1, cast: false });
+    const rug = mesh(roundedRect(x1 - x0 - 0.7, depth - 0.9, 0.3), mat(0x2f4a8a, { roughness: 1, side: THREE.DoubleSide }), { y: 0.005, z: (z0 + z1) / 2 + 0.1, cast: false });
     rug.rotation.x = -Math.PI / 2;
     this.scene.add(rug);
   }
 
-  // ── 회의 테이블 ──────────────────────────
+  // ── 회의 테이블 (주황 의자 + 펜던트 조명) ─────
   buildMeetingArea() {
-    const rug = mesh(new THREE.CircleGeometry(1.9, 48), mat(0x94a3b8, { roughness: 1 }), { x: TABLE.x, y: 0.006, z: TABLE.z, cast: false });
+    const rug = mesh(new THREE.CircleGeometry(1.95, 56), mat(0xf3d2b3, { roughness: 1 }), { x: TABLE.x, y: 0.006, z: TABLE.z, cast: false });
     rug.rotation.x = -Math.PI / 2;
     this.scene.add(rug);
-    const top = mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.06, 48), mat(0xf1efe9, { roughness: 0.35 }), { x: TABLE.x, y: 0.74, z: TABLE.z });
+    const top = mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.07, 56), mat(0xc58a55, { roughness: 0.45 }), { x: TABLE.x, y: 0.74, z: TABLE.z });
     this.scene.add(top);
-    this.scene.add(mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.7, 16), mat(0x475569, { metalness: 0.6, roughness: 0.3 }), { x: TABLE.x, y: 0.36, z: TABLE.z }));
-    this.scene.add(mesh(new THREE.CylinderGeometry(0.4, 0.45, 0.04, 32), mat(0x475569, { metalness: 0.6 }), { x: TABLE.x, y: 0.02, z: TABLE.z }));
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2 + 0.3;
-      const chair = this.makeChair(0x60a5fa, 0.8);
-      chair.position.set(TABLE.x + Math.sin(a) * 1.25, 0, TABLE.z + Math.cos(a) * 1.25);
+    this.scene.add(mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 16), mat(0x5b4636, { roughness: 0.5 }), { x: TABLE.x, y: 0.36, z: TABLE.z }));
+    this.scene.add(mesh(new THREE.CylinderGeometry(0.45, 0.5, 0.05, 32), mat(0x5b4636), { x: TABLE.x, y: 0.025, z: TABLE.z }));
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.25;
+      const chair = this.makeChair(0xf08a4b, 0.8);
+      chair.position.set(TABLE.x + Math.sin(a) * 1.28, 0, TABLE.z + Math.cos(a) * 1.28);
       chair.rotation.y = a + Math.PI;
       this.scene.add(chair);
     }
-    // 테이블 위 노트북과 서류
+    // 테이블 위 노트북 · 서류 · 화분
     const laptop = new THREE.Group();
-    laptop.add(box(0.36, 0.02, 0.25, mat(0x9ca3af, { metalness: 0.6, roughness: 0.3 }), { y: 0.78 }));
-    const lid = box(0.36, 0.24, 0.015, mat(0x9ca3af, { metalness: 0.6, roughness: 0.3 }), { y: 0.9, z: -0.12 });
+    laptop.add(box(0.36, 0.02, 0.25, mat(0xd1d5db, { metalness: 0.6, roughness: 0.3 }), { y: 0.79 }));
+    const lid = box(0.36, 0.24, 0.015, mat(0xd1d5db, { metalness: 0.6, roughness: 0.3 }), { y: 0.91, z: -0.12 });
     lid.rotation.x = -0.25;
     laptop.add(lid);
-    laptop.position.set(TABLE.x + 0.25, 0, TABLE.z - 0.15);
+    laptop.position.set(TABLE.x + 0.3, 0, TABLE.z - 0.15);
     this.scene.add(laptop);
-    this.scene.add(box(0.28, 0.01, 0.2, mat(0xffffff), { x: TABLE.x - 0.3, y: 0.775, z: TABLE.z + 0.2 }));
+    this.scene.add(box(0.28, 0.01, 0.2, mat(0xffffff), { x: TABLE.x - 0.3, y: 0.785, z: TABLE.z + 0.25 }));
+    this.addPlant(TABLE.x - 0.1, TABLE.z - 0.25, 0.35, 0.78);
   }
 
-  // ── 소품 ─────────────────────────────────
-  buildDecor() {
-    const plant = (x, z, s = 1) => {
-      const g = new THREE.Group();
-      g.add(mesh(new THREE.CylinderGeometry(0.22 * s, 0.17 * s, 0.42 * s, 20), mat(0xf8fafc, { roughness: 0.4 }), { y: 0.21 * s }));
-      const leaf = mat(0x2f7d4f, { roughness: 0.8 });
-      const leaf2 = mat(0x3f9d62, { roughness: 0.8 });
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 2;
-        const l = mesh(new THREE.SphereGeometry(0.2 * s, 10, 8), i % 2 ? leaf : leaf2, {
-          x: Math.sin(a) * 0.14 * s, y: (0.62 + (i % 3) * 0.16) * s, z: Math.cos(a) * 0.14 * s,
-        });
-        l.scale.set(1, 1.5, 0.6);
-        l.rotation.y = a;
-        g.add(l);
-      }
-      g.add(mesh(new THREE.SphereGeometry(0.22 * s, 12, 10), leaf2, { y: 1.0 * s }));
-      g.position.set(x, 0, z);
-      this.scene.add(g);
+  // ── 팀별 구역: 색깔 러그 + 팀 간판 ─────────
+  buildZones() {
+    this.zoneSigns = {
+      researcher: "리서치팀",
+      planner: "기획팀",
+      writer: "콘텐츠팀",
+      reviewer: "품질검토팀",
     };
-    plant(-8.4, -5.9, 1.2);
-    plant(8.4, 5.9, 1.2);
-    plant(-3.35, -2.1, 0.85);
-    plant(3.35, -2.1, 0.85);
-    plant(-8.4, 2.4);
+  }
 
-    // 책장 (왼쪽 벽)
+  addZone(a) {
+    const label = this.zoneSigns?.[a.def.id];
+    if (!label) return;
+    const team = new THREE.Color(a.def.color);
+    const rugColor = new THREE.Color(0xf6dcc0).lerp(team, 0.55);
+    const rug = mesh(roundedRect(2.8, 2.7, 0.6), mat(rugColor.getHex(), { roughness: 1, side: THREE.DoubleSide }), { x: a.deskPos.x, y: 0.007, z: a.deskPos.z - 0.45, cast: false });
+    rug.rotation.x = -Math.PI / 2;
+    this.scene.add(rug);
+
+    // 책상 앞판을 팀 색 간판으로 (카메라 쪽에서 잘 보이고 사람을 가리지 않는다)
+    const tex = canvasTexture(512, 128, (g, w, h) => {
+      g.fillStyle = a.def.color;
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = "rgba(255,255,255,0.16)";
+      g.fillRect(0, 0, w, h * 0.2);
+      g.fillStyle = "#fff";
+      g.font = "800 66px Pretendard, 'Malgun Gothic', sans-serif";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(label, w / 2, h / 2 + 4);
+    });
+    const panel = mesh(new THREE.PlaneGeometry(1.6, 0.4), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.2, roughness: 0.6 }), {
+      x: a.deskPos.x, y: 0.47, z: a.deskPos.z + 0.44, cast: false,
+    });
+    this.scene.add(panel);
+  }
+
+  addPlant(x, z, s = 1, y = 0) {
+    const g = new THREE.Group();
+    g.add(mesh(new THREE.CylinderGeometry(0.22 * s, 0.17 * s, 0.42 * s, 20), mat(0xf8f1e7, { roughness: 0.5 }), { y: 0.21 * s }));
+    const leafA = mat(0x3f8f4f, { roughness: 0.8 });
+    const leafB = mat(0x5aaa5c, { roughness: 0.8 });
+    const n = 9;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const l = mesh(new THREE.SphereGeometry(0.2 * s, 10, 8), i % 2 ? leafA : leafB, {
+        x: Math.sin(a) * 0.17 * s, y: (0.6 + (i % 3) * 0.17) * s, z: Math.cos(a) * 0.17 * s,
+      });
+      l.scale.set(0.9, 1.7, 0.55);
+      l.rotation.set(Math.sin(a) * 0.5, a, Math.cos(a) * 0.5);
+      g.add(l);
+    }
+    g.add(mesh(new THREE.SphereGeometry(0.2 * s, 12, 10), leafB, { y: 1.05 * s }));
+    g.position.set(x, y, z);
+    this.scene.add(g);
+    return g;
+  }
+
+  // ── 소품: 라운지 · 게임 코너 · 카페 바 · 책장 ──
+  buildDecor() {
+    const W = ROOM_W / 2;
+    const D = ROOM_D / 2;
+    // 가장자리를 따라 화분
+    for (const [x, z, s] of [
+      [-W + 0.5, -2.2, 1.1], [-W + 0.5, 1.2, 1], [-W + 0.6, D - 1.4, 1.2],
+      [-4.2, -D + 0.5, 1], [4.2, -D + 0.5, 1], [W - 0.5, -2.1, 1.1], [W - 0.5, 1.6, 1],
+      [-3.4, -2.05, 0.8], [3.4, -2.05, 0.8], [-1.0, D - 0.4, 0.9], [2.6, D - 0.4, 0.9], [W - 0.5, D - 0.5, 1.2],
+    ]) this.addPlant(x, z, s);
+
+    // 앞쪽 가장자리 낮은 화단
+    const planter = mat(0xc89b6d, { roughness: 0.7 });
+    for (const [x0, x1] of [[-3.6, -0.3], [0.8, 5.0]]) {
+      const len = x1 - x0;
+      this.scene.add(box(len, 0.36, 0.42, planter, { x: (x0 + x1) / 2, y: 0.18, z: D - 0.25 }, 0.05));
+      for (let x = x0 + 0.3; x < x1; x += 0.45) {
+        const leaf = mesh(new THREE.SphereGeometry(0.2, 10, 8), mat(x % 0.9 < 0.45 ? 0x4c9a52 : 0x6cbf62, { roughness: 0.85 }), { x, y: 0.46, z: D - 0.25 });
+        leaf.scale.set(1.1, 0.9, 0.9);
+        this.scene.add(leaf);
+      }
+    }
+
+    // 책장 (왼쪽 뒤)
     const shelf = new THREE.Group();
-    const wood = mat(0x7a5a3e, { roughness: 0.8 });
+    const wood = mat(0xb98a5e, { roughness: 0.7 });
     shelf.add(box(0.4, 2.2, 2.4, wood, { y: 1.1 }));
-    const bookColors = [0x1e40af, 0xf59e0b, 0x10b981, 0xef4444, 0x8b5cf6, 0xf8fafc, 0x0ea5e9];
+    const bookColors = [0x1e40af, 0xf59e0b, 0x10b981, 0xef4444, 0x8b5cf6, 0xf8fafc, 0x0ea5e9, 0xf08a4b];
     for (let r = 0; r < 4; r++) {
-      shelf.add(box(0.42, 0.04, 2.3, mat(0x5b4636), { x: 0.02, y: 0.3 + r * 0.52 }));
+      shelf.add(box(0.42, 0.04, 2.3, mat(0x8a6644), { x: 0.02, y: 0.3 + r * 0.52 }));
       let z = -1.05;
       let i = r * 3;
       while (z < 1.0) {
@@ -400,42 +534,10 @@ export class Office3D {
         i++;
       }
     }
-    shelf.position.set(-8.75, 0, -3.2);
+    shelf.position.set(-W + 0.3, 0, -4.4);
     this.scene.add(shelf);
 
-    // 커피 스테이션 (오른쪽 뒤)
-    const counter = new THREE.Group();
-    counter.add(box(2.4, 0.9, 0.6, mat(0xf1f5f9, { roughness: 0.5 }), { y: 0.45 }, 0.03));
-    counter.add(box(2.45, 0.05, 0.65, mat(0x334155, { roughness: 0.3 }), { y: 0.92 }));
-    const machine = box(0.4, 0.5, 0.35, mat(0x111827, { metalness: 0.5, roughness: 0.3 }), { x: -0.6, y: 1.2 }, 0.04);
-    counter.add(machine);
-    for (let i = 0; i < 3; i++) {
-      counter.add(mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.1, 16), mat([0xffffff, 0x1e40af, 0xf59e0b][i]), { x: 0.2 + i * 0.18, y: 1.0 }));
-    }
-    counter.position.set(6.8, 0, -6.1);
-    this.scene.add(counter);
-
-    // 정수기 (오른쪽 벽)
-    const cooler = new THREE.Group();
-    cooler.add(box(0.4, 1.0, 0.4, mat(0xf8fafc), { y: 0.5 }, 0.03));
-    cooler.add(mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.45, 20), new THREE.MeshPhysicalMaterial({ color: 0x93c5fd, transparent: true, opacity: 0.6, roughness: 0.1 }), { y: 1.23 }));
-    cooler.position.set(8.5, 0, -3.4);
-    this.scene.add(cooler);
-
-    // 라운지: 소파 + 낮은 테이블 (왼쪽 앞)
-    const sofa = new THREE.Group();
-    const fabric = mat(0x475569, { roughness: 0.95 });
-    sofa.add(box(2.2, 0.4, 0.85, fabric, { y: 0.25 }, 0.08));
-    sofa.add(box(2.2, 0.55, 0.22, fabric, { y: 0.6, z: -0.33 }, 0.08));
-    sofa.add(box(0.2, 0.55, 0.85, fabric, { x: -1.1, y: 0.4 }, 0.08));
-    sofa.add(box(0.2, 0.55, 0.85, fabric, { x: 1.1, y: 0.4 }, 0.08));
-    sofa.add(box(0.5, 0.35, 0.12, mat(0xf59e0b), { x: -0.6, y: 0.6, z: -0.18 }, 0.05));
-    sofa.position.set(-6.3, 0, 5.2);
-    sofa.rotation.y = Math.PI;
-    this.scene.add(sofa);
-    this.scene.add(box(1.1, 0.35, 0.6, mat(0x7a5a3e), { x: -6.3, y: 0.18, z: 4.1 }, 0.03));
-
-    // 화이트보드 (뒷벽, 창문 사이)
+    // 화이트보드 (스탠드형)
     const board = canvasTexture(512, 256, (g, w, h) => {
       g.fillStyle = "#fbfbf9";
       g.fillRect(0, 0, w, h);
@@ -451,49 +553,112 @@ export class Office3D {
         g.fillRect(30 + (i % 3) * 160, 88 + Math.floor(i / 3) * 62, 60, 5);
       }
     });
-    this.scene.add(box(2.6, 1.3, 0.05, mat(0x94a3b8, { metalness: 0.4 }), { x: -5.9, y: 1.7, z: -ROOM_D / 2 + 0.03 }));
-    // 뒷벽 창문과 겹치지 않게 벽 앞쪽에 붙인다
-    this.scene.add(mesh(new THREE.PlaneGeometry(2.5, 1.2), mat(0xffffff, { map: board, roughness: 0.3 }), { x: -5.9, y: 1.7, z: -ROOM_D / 2 + 0.06, cast: false }));
+    const wb = new THREE.Group();
+    wb.add(box(2.3, 1.2, 0.05, mat(0xd1d5db, { metalness: 0.4 }), { y: 1.55 }));
+    wb.add(mesh(new THREE.PlaneGeometry(2.2, 1.1), mat(0xffffff, { map: board, roughness: 0.3 }), { y: 1.55, z: 0.03, cast: false }));
+    for (const sx of [-1.05, 1.05]) {
+      wb.add(box(0.05, 1.5, 0.05, mat(0x9ca3af, { metalness: 0.5 }), { x: sx, y: 0.75 }));
+      wb.add(box(0.06, 0.04, 0.6, mat(0x9ca3af, { metalness: 0.5 }), { x: sx, y: 0.02 }));
+    }
+    wb.position.set(-5.9, 0, -5.4);
+    wb.rotation.y = 0.15;
+    this.scene.add(wb);
 
-    // 벽시계 (오른쪽 벽)
-    const clockFace = canvasTexture(256, 256, (g) => {
-      g.fillStyle = "#fff";
-      g.beginPath();
-      g.arc(128, 128, 124, 0, Math.PI * 2);
-      g.fill();
-      g.strokeStyle = "#111827";
-      g.lineWidth = 10;
-      g.stroke();
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        g.fillStyle = "#111827";
-        g.fillRect(128 + Math.sin(a) * 100 - 3, 128 - Math.cos(a) * 100 - 8, 6, 16);
-      }
-    });
-    this.clockHands = new THREE.Group();
-    const clock = mesh(new THREE.CircleGeometry(0.35, 32), mat(0xffffff, { map: clockFace }), { cast: false });
-    this.clockHands.add(clock);
-    this.hourHand = box(0.03, 0.18, 0.01, mat(0x111827), { y: 0.08, z: 0.01 });
-    this.minuteHand = box(0.02, 0.27, 0.01, mat(0x111827), { y: 0.12, z: 0.015 });
-    const hourPivot = new THREE.Group();
-    hourPivot.add(this.hourHand);
-    const minutePivot = new THREE.Group();
-    minutePivot.add(this.minuteHand);
-    this.clockHands.add(hourPivot, minutePivot);
-    this.hourPivot = hourPivot;
-    this.minutePivot = minutePivot;
-    this.clockHands.position.set(ROOM_W / 2 - 0.01, 2.2, 1.5);
-    this.clockHands.rotation.y = -Math.PI / 2;
-    this.scene.add(this.clockHands);
+    // 카페 바: 긴 카운터 + 커피머신 + 주황 스툴
+    const bar = new THREE.Group();
+    bar.add(box(3.6, 0.95, 0.6, mat(0xf4ece1, { roughness: 0.6 }), { y: 0.475 }, 0.04));
+    bar.add(box(3.7, 0.06, 0.7, mat(0xb98a5e, { roughness: 0.4 }), { y: 0.98 }));
+    bar.add(box(0.42, 0.5, 0.36, mat(0x1f2937, { metalness: 0.5, roughness: 0.3 }), { x: -1.3, y: 1.26 }, 0.04));
+    bar.add(box(0.5, 0.42, 0.4, mat(0xd8e4f0, { metalness: 0.3, roughness: 0.3 }), { x: 1.35, y: 1.22 }, 0.04));
+    for (let i = 0; i < 4; i++) bar.add(mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.1, 16), mat([0xffffff, 0x1e40af, 0xf59e0b, 0xf08a4b][i]), { x: -0.6 + i * 0.22, y: 1.06 }));
+    for (let i = 0; i < 4; i++) {
+      const stool = new THREE.Group();
+      stool.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 20), mat(0xf08a4b, { roughness: 0.6 }), { y: 0.72 }));
+      stool.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 10), mat(0x9ca3af, { metalness: 0.6 }), { y: 0.36 }));
+      stool.add(mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.03, 20), mat(0x9ca3af, { metalness: 0.6 }), { y: 0.02 }));
+      stool.position.set(-1.3 + i * 0.85, 0, 0.75);
+      bar.add(stool);
+    }
+    bar.position.set(6.2, 0, -D + 0.55);
+    this.scene.add(bar);
+    // 바 위 펜던트 조명
+    for (let i = 0; i < 3; i++) {
+      const x = 5.0 + i * 1.2;
+      this.scene.add(mesh(new THREE.CylinderGeometry(0.005, 0.005, 1.0, 4), mat(0x1f2937), { x, y: 2.6, z: -D + 0.55, cast: false }));
+      this.scene.add(mesh(new THREE.SphereGeometry(0.13, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false }), { x, y: 2.05, z: -D + 0.55, cast: false }));
+    }
+    const barLight = new THREE.PointLight(0xffc27a, 8, 6, 1.6);
+    barLight.position.set(6.2, 1.9, -D + 0.9);
+    this.scene.add(barLight);
 
-    // 프린터 (오른쪽 앞)
-    const printer = new THREE.Group();
-    printer.add(box(0.8, 0.7, 0.6, mat(0x94a3b8), { y: 0.35 }, 0.03));
-    printer.add(box(0.7, 0.3, 0.5, mat(0xe2e8f0), { y: 0.85 }, 0.03));
-    printer.add(box(0.4, 0.02, 0.3, mat(0xffffff), { y: 1.01, z: 0.1 }));
-    printer.position.set(8.2, 0, 3.4);
-    printer.rotation.y = -Math.PI / 2;
-    this.scene.add(printer);
+    // 정수기
+    const cooler = new THREE.Group();
+    cooler.add(box(0.4, 1.0, 0.4, mat(0xf8fafc), { y: 0.5 }, 0.03));
+    cooler.add(mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.45, 20), new THREE.MeshPhysicalMaterial({ color: 0x93c5fd, transparent: true, opacity: 0.6, roughness: 0.1 }), { y: 1.23 }));
+    cooler.position.set(W - 0.5, 0, -3.6);
+    this.scene.add(cooler);
+
+    // 라운지 (왼쪽 앞): 크림색 소파 + 쿠션 + 빈백 + 낮은 테이블
+    const lounge = mesh(roundedRect(3.6, 3.0, 0.8), mat(0xb9c6e6, { roughness: 1, side: THREE.DoubleSide }), { x: -6.9, y: 0.007, z: 4.4, cast: false });
+    lounge.rotation.x = -Math.PI / 2;
+    this.scene.add(lounge);
+    const sofa = new THREE.Group();
+    const fabric = mat(0xf3ebe0, { roughness: 0.95 });
+    sofa.add(box(2.3, 0.42, 0.9, fabric, { y: 0.26 }, 0.1));
+    sofa.add(box(2.3, 0.6, 0.24, fabric, { y: 0.62, z: -0.34 }, 0.1));
+    sofa.add(box(0.22, 0.58, 0.9, fabric, { x: -1.14, y: 0.42 }, 0.1));
+    sofa.add(box(0.22, 0.58, 0.9, fabric, { x: 1.14, y: 0.42 }, 0.1));
+    sofa.add(box(0.5, 0.36, 0.13, mat(0xf08a4b), { x: -0.6, y: 0.64, z: -0.18 }, 0.06));
+    sofa.add(box(0.5, 0.36, 0.13, mat(0x3f8f4f), { x: 0.6, y: 0.64, z: -0.18 }, 0.06));
+    sofa.position.set(-8.25, 0, 4.4);
+    sofa.rotation.y = Math.PI / 2;
+    this.scene.add(sofa);
+    this.scene.add(box(1.0, 0.34, 0.7, mat(0xb98a5e), { x: -6.9, y: 0.17, z: 4.4 }, 0.06));
+    this.addPlant(-6.95, 4.35, 0.3, 0.34);
+    const beanbag = (x, z, color) => {
+      const b = mesh(new THREE.SphereGeometry(0.42, 24, 16), mat(color, { roughness: 0.9 }), { x, y: 0.26, z });
+      b.scale.set(1, 0.62, 1);
+      this.scene.add(b);
+    };
+    beanbag(-5.6, 5.3, 0xf08a4b);
+    beanbag(-5.6, 3.5, 0x6cbf62);
+
+    // 게임 코너 (오른쪽 앞): 오락기 2대 + 테이블 축구
+    const arcade = (x, z, color) => {
+      const g = new THREE.Group();
+      g.add(box(0.7, 1.7, 0.6, mat(color, { roughness: 0.5 }), { y: 0.85 }, 0.04));
+      const scr = canvasTexture(128, 128, (c, w, h) => {
+        const gr = c.createLinearGradient(0, 0, w, h);
+        gr.addColorStop(0, "#1e1b4b");
+        gr.addColorStop(1, "#7c3aed");
+        c.fillStyle = gr;
+        c.fillRect(0, 0, w, h);
+        c.fillStyle = "#fde047";
+        c.fillRect(20, 80, 14, 14);
+        c.fillStyle = "#f472b6";
+        for (let i = 0; i < 5; i++) c.fillRect(20 + i * 20, 20, 12, 10);
+      });
+      const screen = mesh(new THREE.PlaneGeometry(0.52, 0.45), new THREE.MeshBasicMaterial({ map: scr, toneMapped: false }), { y: 1.25, z: 0.305, cast: false });
+      screen.rotation.x = -0.15;
+      g.add(screen);
+      g.add(box(0.72, 0.1, 0.35, mat(0x111827), { y: 0.92, z: 0.38 }));
+      g.add(mesh(new THREE.SphereGeometry(0.04, 10, 8), mat(0xef4444), { x: -0.15, y: 1.0, z: 0.4 }));
+      g.position.set(x, 0, z);
+      this.scene.add(g);
+    };
+    arcade(6.9, 4.5, 0x2563eb);
+    arcade(7.75, 4.5, 0xdb2777);
+    const fb = new THREE.Group();
+    fb.add(box(1.4, 0.2, 0.8, mat(0x8a5a36), { y: 0.82 }, 0.03));
+    fb.add(box(1.25, 0.02, 0.68, mat(0x3f9d4a), { y: 0.93 }));
+    for (let i = 0; i < 4; i++) {
+      const rod = mesh(new THREE.CylinderGeometry(0.015, 0.015, 1.1, 6), mat(0xd1d5db, { metalness: 0.7 }), { x: -0.45 + i * 0.3, y: 0.98 });
+      rod.rotation.x = Math.PI / 2;
+      fb.add(rod);
+    }
+    for (const sx of [-0.6, 0.6]) for (const sz of [-0.32, 0.32]) fb.add(box(0.07, 0.75, 0.07, mat(0x5b3a22), { x: sx, y: 0.36, z: sz }));
+    fb.position.set(7.3, 0, 5.85);
+    this.scene.add(fb);
   }
 
   makeChair(color = 0x1f2937, scale = 1) {
@@ -516,8 +681,8 @@ export class Office3D {
   // ── 책상 ─────────────────────────────────
   buildDesk(a) {
     const g = new THREE.Group();
-    const top = mat(0xd9b88f, { roughness: 0.5 });
-    const legMat = mat(0x374151, { metalness: 0.5, roughness: 0.35 });
+    const top = mat(0xf6efe6, { roughness: 0.45 });
+    const legMat = mat(0xb98a5e, { roughness: 0.6 });
     g.add(box(1.7, 0.05, 0.85, top, { y: 0.74 }, 0.02));
     for (const sx of [-0.78, 0.78]) g.add(box(0.05, 0.72, 0.7, legMat, { x: sx, y: 0.36 }));
     // 모니터 (캐릭터 쪽을 바라봄 = -z)
@@ -534,18 +699,24 @@ export class Office3D {
     g.add(box(0.22, 0.03, 0.3, mat(0xffffff), { x: -0.55, y: 0.785, z: -0.05 }));
     // 앞쪽(카메라 쪽) 상태 LED 줄
     a.ledMat = new THREE.MeshBasicMaterial({ color: STATE_COLOR.idle, toneMapped: false });
-    g.add(mesh(new THREE.BoxGeometry(1.5, 0.025, 0.01), a.ledMat, { y: 0.7, z: 0.43, cast: false }));
-    // 모니터 빛: 캐릭터 얼굴을 상태 색으로 비춘다
-    a.screenLight = new THREE.PointLight(STATE_COLOR.idle, 0, 2.2, 2);
-    a.screenLight.position.set(0, 1.15, -0.2);
-    g.add(a.screenLight);
+    g.add(mesh(new THREE.BoxGeometry(1.6, 0.03, 0.01), a.ledMat, { y: 0.69, z: 0.44, cast: false }));
+    // (모니터 빛은 실제 조명 대신 화면 발광·LED·발밑 링으로 표현한다.
+    //  책상마다 조명을 켜면 장면 전체의 그리기 비용이 크게 늘어 휴대폰에서 버벅인다.)
 
-    const chair = this.makeChair(0x1f2937);
+    // 스탠드 조명 (따뜻한 빛)
+    g.add(mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.03, 16), mat(0x374151), { x: -0.7, y: 0.78, z: 0.25 }));
+    g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 8), mat(0x374151), { x: -0.7, y: 0.99, z: 0.25 }));
+    g.add(mesh(new THREE.ConeGeometry(0.12, 0.14, 20, 1, true), mat(0xf5e6c8, { side: THREE.DoubleSide }), { x: -0.7, y: 1.22, z: 0.25 }));
+    g.add(mesh(new THREE.SphereGeometry(0.045, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffe2a8, toneMapped: false }), { x: -0.7, y: 1.17, z: 0.25, cast: false }));
+
+    const chairColor = a.def.id === "manager" ? 0x1f2937 : new THREE.Color(a.def.color).lerp(new THREE.Color(0x1f2937), 0.35).getHex();
+    const chair = this.makeChair(chairColor);
     chair.position.set(0, 0, -1.3);
     g.add(chair);
 
     g.position.copy(a.deskPos);
     this.scene.add(g);
+    this.addZone(a);
   }
 
   // ── 캐릭터 ───────────────────────────────
@@ -687,9 +858,7 @@ export class Office3D {
     a.ledMat.color.setHex(color);
     a.screenMat.emissive.setHex(color);
     const active = ["thinking", "searching", "working"].includes(state);
-    a.screenMat.emissiveIntensity = active ? 1.1 : 0.25;
-    a.screenLight.color.setHex(color);
-    a.screenLight.intensity = active ? 2.2 : 0;
+    a.screenMat.emissiveIntensity = active ? 1.4 : 0.25;
     a.dotEl.dataset.state = state;
   }
 
@@ -787,10 +956,7 @@ export class Office3D {
       a.bubbleEl.classList.toggle("below", (1 - this.tmp.y) * 0.5 * h < 150);
     }
 
-    const now = new Date();
-    this.minutePivot.rotation.z = -(now.getMinutes() / 60) * Math.PI * 2;
-    this.hourPivot.rotation.z = -(((now.getHours() % 12) + now.getMinutes() / 60) / 12) * Math.PI * 2;
-
+    if (!this.active) return;
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);

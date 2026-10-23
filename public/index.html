@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>AI인터시스 AI 사무실</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
@@ -10,18 +10,23 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
+    <a class="brand" href="#/monitor" aria-label="AI 사무실 홈">
       <span class="brand-mark">AI</span>
-      <div>
-        <h1>AIINTERSYS AI OFFICE</h1>
-        <p>Claude 에이전트 팀이 일하는 가상 사무실</p>
-      </div>
-    </div>
+      <span class="brand-text">
+        <b>AIINTERSYS AI OFFICE</b>
+        <small>Claude 에이전트 팀이 일하는 가상 사무실</small>
+      </span>
+    </a>
+    <nav class="nav" aria-label="메뉴">
+      <a href="#/monitor" data-view="monitor"><span aria-hidden="true">📊</span> 모니터링</a>
+      <a href="#/office" data-view="office"><span aria-hidden="true">🏢</span> 사무실</a>
+      <a href="#/reports" data-view="reports"><span aria-hidden="true">🗂️</span> 보고함 <i class="badge" id="reportCount" hidden>0</i></a>
+    </nav>
     <div class="topbar-right">
-      <div class="mode-switch" role="radiogroup" aria-label="실행 모드">
-        <button type="button" data-mode="demo" class="active" role="radio" aria-checked="true">데모</button>
-        <button type="button" data-mode="live" role="radio" aria-checked="false">실제 AI</button>
-      </div>
+      <button type="button" class="sound-btn" id="soundBtn" aria-pressed="true" title="단계가 끝날 때 알림음과 음성으로 요약해 알려 줍니다">🔊 <span>음성 알림</span></button>
+      <a class="live-pill" id="livePill" href="#/monitor" data-status="idle">
+        <i class="live-dot"></i><span id="liveText">대기 중</span>
+      </a>
       <div class="meter" title="이번 작업의 예상 API 비용">
         <span class="meter-label">비용</span>
         <span id="cost">$0.000</span>
@@ -29,43 +34,123 @@
     </div>
   </header>
 
-  <main class="layout">
-    <section class="office-wrap" aria-label="사무실">
-      <div class="office3d" id="office3d">
-        <div class="hud">
-          <button type="button" data-view="front">정면</button>
-          <button type="button" data-view="top">위에서</button>
-          <button type="button" data-view="side">측면</button>
-          <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
+  <main>
+    <!-- ── 모니터링 (첫 화면) ───────────────── -->
+    <section class="view" id="view-monitor" data-view="monitor" aria-label="모니터링">
+      <div class="mon-grid">
+        <div class="mon-main">
+          <article class="card hero" id="hero">
+            <div class="hero-head">
+              <div class="hero-title">
+                <span class="status-badge" id="statusBadge" data-status="idle">대기</span>
+                <h1 id="taskTitle">아직 지시한 업무가 없어요</h1>
+              </div>
+              <div class="hero-meta" id="heroMeta">아래 입력창에 업무를 적으면 팀장이 일을 나누고 팀원들이 협업을 시작합니다.</div>
+            </div>
+            <div class="progress-row">
+              <div class="progress" role="progressbar" aria-label="전체 진척도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+              <b class="progress-num" id="progressNum">0%</b>
+            </div>
+            <ol class="stepper" id="stepper">
+              <li data-step="0"><i></i><span>업무 접수</span></li>
+              <li data-step="1"><i></i><span>팀장 분배</span></li>
+              <li data-step="2"><i></i><span>팀원 작업</span></li>
+              <li data-step="3"><i></i><span>최종 정리</span></li>
+              <li data-step="4"><i></i><span>완료</span></li>
+            </ol>
+            <div class="examples" id="examples"></div>
+          </article>
+
+          <div class="kpis">
+            <div class="kpi"><span>경과 시간</span><b id="kpiTime">00:00</b></div>
+            <div class="kpi"><span>위임 업무</span><b id="kpiTasks">0 / 0</b></div>
+            <div class="kpi"><span>웹 검색</span><b id="kpiSearch">0회</b></div>
+            <div class="kpi"><span>예상 비용</span><b id="kpiCost">$0.000</b></div>
+          </div>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>팀원 현황</h2>
+              <a class="link" href="#/office">사무실에서 보기 →</a>
+            </div>
+            <div class="team" id="team"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>업무 타임라인</h2>
+              <div class="legend" id="legend"></div>
+            </div>
+            <div class="gantt" id="gantt">
+              <p class="empty">업무가 시작되면 팀원별로 언제 무엇을 했는지 시간 막대로 그려집니다.</p>
+            </div>
+          </article>
         </div>
+
+        <aside class="card mon-side">
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" class="tab active" data-tab="feed" aria-selected="true">진행 기록</button>
+            <button type="button" role="tab" class="tab" data-tab="result" aria-selected="false">최종 결과 <span class="dot" id="resultDot" hidden></span></button>
+          </div>
+          <div class="tab-panel feed" id="feed" role="tabpanel">
+            <p class="empty">팀장이 일을 나누고 팀원들이 조사·기획·작성·검토하는 과정이 시간순으로 쌓입니다.</p>
+          </div>
+          <div class="tab-panel markdown" id="result" role="tabpanel" hidden>
+            <p class="empty">아직 결과가 없습니다.</p>
+          </div>
+        </aside>
       </div>
-      <div class="legend" id="legend"></div>
     </section>
 
-    <aside class="panel">
-      <form class="task-form" id="taskForm">
-        <label for="task">팀에게 맡길 업무</label>
-        <textarea id="task" rows="4" placeholder="예) 중소기업을 위한 생성형 AI 도입 제안서를 써줘"></textarea>
-        <div class="examples" id="examples"></div>
-        <div class="form-row">
-          <span class="mode-hint" id="modeHint">데모: 정해진 대본으로 흐름만 보여줍니다</span>
-          <button type="button" id="cancelBtn" class="btn-ghost" hidden>중단</button>
-          <button type="submit" id="submitBtn" class="btn-primary">업무 지시</button>
+    <!-- ── 3D 사무실 ───────────────────────── -->
+    <section class="view" id="view-office" data-view="office" aria-label="3D 사무실" hidden>
+      <div class="office3d" id="office3d">
+        <div class="hud">
+          <button type="button" data-cam="iso">입체</button>
+          <button type="button" data-cam="front">정면</button>
+          <button type="button" data-cam="top">위에서</button>
+          <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
         </div>
-      </form>
+        <a class="office-status" id="officeStatus" href="#/monitor" hidden>
+          <span class="office-status-task" id="officeTask"></span>
+          <span class="office-status-bar"><i id="officeFill"></i></span>
+          <b id="officePct">0%</b>
+        </a>
+      </div>
+      <div class="legend office-legend" id="officeLegend"></div>
+    </section>
 
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" class="tab active" data-tab="feed" aria-selected="true">업무 흐름</button>
-        <button type="button" role="tab" class="tab" data-tab="result" aria-selected="false">최종 결과 <span class="dot" id="resultDot" hidden></span></button>
+    <!-- ── 보고함 ──────────────────────────── -->
+    <section class="view" id="view-reports" data-view="reports" aria-label="보고함" hidden>
+      <div class="reports">
+        <div class="card reports-list">
+          <div class="card-head">
+            <h2>보고함</h2>
+            <span class="muted small">이 브라우저에 저장된 최근 결과</span>
+          </div>
+          <div id="reportList"></div>
+        </div>
+        <article class="card reports-detail" id="reportDetail">
+          <p class="empty">왼쪽에서 보고서를 고르면 내용이 여기에 표시됩니다.</p>
+        </article>
       </div>
-      <div class="tab-panel" id="feed" role="tabpanel">
-        <p class="empty">업무를 지시하면 팀장이 일을 나누고, 팀원들이 협업하는 과정이 여기에 기록됩니다.</p>
-      </div>
-      <div class="tab-panel markdown" id="result" role="tabpanel" hidden>
-        <p class="empty">아직 결과가 없습니다.</p>
-      </div>
-    </aside>
+    </section>
   </main>
+
+  <!-- ── 업무 지시창 (모든 화면 하단 고정) ───── -->
+  <form class="commandbar" id="taskForm" autocomplete="off">
+    <div class="mode-switch" role="radiogroup" aria-label="실행 모드">
+      <button type="button" data-mode="demo" class="active" role="radio" aria-checked="true">데모</button>
+      <button type="button" data-mode="live" role="radio" aria-checked="false">실제 AI</button>
+    </div>
+    <label class="sr-only" for="task">팀에게 맡길 업무</label>
+    <textarea id="task" rows="1" placeholder="팀에게 맡길 업무를 적어 주세요 — 예) 중소기업용 생성형 AI 도입 제안서 써줘"></textarea>
+    <button type="button" id="cancelBtn" class="btn-ghost" hidden>중단</button>
+    <button type="submit" id="submitBtn" class="btn-primary">업무 지시</button>
+    <span class="mode-hint" id="modeHint">데모: 정해진 대본으로 흐름만 보여줍니다</span>
+  </form>
 
   <dialog id="agentDialog" class="agent-dialog">
     <div class="dialog-head">
