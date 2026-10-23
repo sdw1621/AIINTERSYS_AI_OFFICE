@@ -136,6 +136,11 @@ const csv = (rows) => rows.map((r) => r.map((v) => {
 const NAMES = { shin: "신동욱", yang: "양선희", leebu: "이부일", leejh: "이재현" };
 const STATUS = { todo: "할 일", doing: "진행 중", done: "완료" };
 const KIND = { text: "대화", file: "파일", photo: "사진", link: "링크", deleted: "삭제", system: "시스템" };
+// 구글 시트가 날짜·시각을 숫자(일련번호)로 바꾸지 않도록 요일과 「시·분」을 붙인 글자로 내보낸다
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+const dayK = (d) => (/^\d{4}-\d{2}-\d{2}/.test(d || "") ? `${d.slice(0, 10)}(${WD[new Date(d.slice(0, 10) + "T00:00:00Z").getUTCDay()]})` : d || "");
+const timeK = (hm) => (/^\d{2}:\d{2}/.test(hm || "") ? `${hm.slice(0, 2)}시 ${hm.slice(3, 5)}분` : hm || "");
+const stampK = (v) => { const s = String(v || "").replace("T", " "); return s.length >= 16 ? `${dayK(s)} ${timeK(s.slice(11, 16))}` : dayK(s); };
 app.get("/api/sheet/:tab.csv", async (req, res) => {
   const given = Buffer.from(String(req.query.key || ""));
   const want = Buffer.from(SHEET_KEY);
@@ -147,24 +152,24 @@ app.get("/api/sheet/:tab.csv", async (req, res) => {
     switch (req.params.tab) {
       case "chat":
         rows = [["날짜", "시각", "보낸 사람", "프로젝트 인원", "유형", "내용"], ...(await allChat(room)).map((m) => {
-          return [m.kst.slice(0, 10), m.kst.slice(11, 16), m.who || "(시스템)", NAMES[m.person] || "", KIND[m.kind] || m.kind, m.text.slice(0, 5000)];
+          return [dayK(m.kst), timeK(m.kst.slice(11, 16)), m.who || "(시스템)", NAMES[m.person] || "", KIND[m.kind] || m.kind, m.text.slice(0, 5000)];
         })];
         break;
       case "tasks":
-        rows = [["담당", "상태", "업무", "내용", "근거(대화 시각)"], ...(ins.tasks || []).map((t) => [NAMES[t.who] || t.who, STATUS[t.status] || t.status, t.title, t.detail || "", (t.from || "").replace("T", " ")])];
+        rows = [["담당", "상태", "업무", "내용", "근거(대화 시각)"], ...(ins.tasks || []).map((t) => [NAMES[t.who] || t.who, STATUS[t.status] || t.status, t.title, t.detail || "", stampK(t.from)])];
         break;
       case "deadlines":
-        rows = [["날짜", "항목", "메모", "근거(대화 시각)"], ...(ins.deadlines || []).map((d) => [d.date || "확인 필요", d.title, d.note || "", (d.from || "").replace("T", " ")])];
+        rows = [["날짜", "항목", "메모", "근거(대화 시각)"], ...(ins.deadlines || []).map((d) => [d.date ? dayK(d.date) : "확인 필요", d.title, d.note || "", stampK(d.from)])];
         break;
       case "decisions":
-        rows = [["날짜", "결정"], ...(ins.decisions || []).map((d) => [d.date, d.text])];
+        rows = [["날짜", "결정"], ...(ins.decisions || []).map((d) => [dayK(d.date), d.text])];
         break;
       case "milestones":
-        rows = [["날짜", "내용"], ...(ins.milestones || []).map((d) => [d.date, d.text])];
+        rows = [["날짜", "내용"], ...(ins.milestones || []).map((d) => [dayK(d.date), d.text])];
         break;
       case "overview": {
         const { total, days } = await chatDays(room);
-        rows = [["항목", "내용"], ["단톡방", ins.title || ""], ["현재 단계", ins.stage || ""], ["요약", ins.summary || ""], ["누적 메시지", total], ["대화 기간", days.length ? `${days.at(-1).day} ~ ${days[0].day}` : ""], ["분석 시각", (ins.analyzedAt || "").replace("T", " ").slice(0, 16)], ["확인 필요", (ins.open || []).join(" / ")]];
+        rows = [["항목", "내용"], ["단톡방", ins.title || ""], ["현재 단계", ins.stage || ""], ["요약", ins.summary || ""], ["누적 메시지", total], ["대화 기간", days.length ? `${dayK(String(days.at(-1).day))} ~ ${dayK(String(days[0].day))}` : ""], ["분석 시각", stampK(String(ins.analyzedAt || "").slice(0, 16))], ["확인 필요", (ins.open || []).join(" / ")]];
         break;
       }
       default:
