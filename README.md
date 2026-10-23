@@ -34,14 +34,22 @@ npm start
 - **데모 모드**: API 키 없이 정해진 대본으로 사무실 흐름만 보여줍니다. 비용이 들지 않습니다.
 - **실제 AI 모드**: `.env.example`을 `.env`로 복사하고 `ANTHROPIC_API_KEY`를 넣은 뒤 서버를 다시 시작하면 활성화됩니다. 실제 Claude API 비용이 발생하며, 화면 오른쪽 위에 예상 비용이 표시됩니다.
 
+## Vercel 배포
+
+`main` 브랜치에 푸시하면 Vercel이 자동 배포합니다. `server.js`가 Express 앱을 export하고, `public/`은 CDN이 직접 서빙합니다.
+
+- 환경변수 없이 배포하면 **데모 모드만** 동작합니다.
+- 실제 AI 모드를 켜려면 Vercel 프로젝트 환경변수에 `ANTHROPIC_API_KEY`와 `OFFICE_PASSCODE`(접속 코드)를 **둘 다** 넣고 재배포합니다. 공개 URL이라 접속 코드 없이는 실제 모드가 꺼지도록 되어 있습니다. 실제 모드를 고르면 브라우저가 접속 코드를 한 번 묻습니다.
+- 함수 최대 실행 시간은 `vercel.json`에서 300초로 잡혀 있습니다. 실제 모드 작업이 이보다 길면 중간에 끊기므로, 필요하면 `MAX_MANAGER_TURNS`나 effort를 낮추세요.
+
 ## 구조
 
 ```
-server.js            Express 서버 · 작업 생성 API · 실시간 이벤트(SSE)
+server.js            Express 서버 · 업무 실행 API(/api/run, 이벤트를 NDJSON으로 스트리밍)
 src/agents.js        팀원 정의(이름·역할·책상 위치)와 시스템 프롬프트
 src/orchestrator.js  실제 모드: 팀장이 delegate_task 도구로 팀원을 호출하는 에이전트 루프
 src/demo.js          데모 모드: 같은 이벤트를 대본대로 재생
-src/jobs.js          작업별 이벤트 기록 · 구독 관리
+src/jobs.js          작업 하나의 이벤트 기록 · 구독 관리
 public/office3d.js   3D 사무실 · 캐릭터 · 애니메이션 (Three.js)
 public/              화면 (HTML/CSS/JS, 빌드 과정 없음)
 ```

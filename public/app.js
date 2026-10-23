@@ -26,9 +26,10 @@ const EXAMPLES = [
 const agents = new Map(); // id → { def, state, calls, bubbleKind, bubbleText, hideTimer }
 let mode = "demo";
 let liveAvailable = false;
-let currentJob = null;
-let source = null;
+let needsPasscode = false;
+let controller = null; // 진행 중인 작업 요청 (중단 버튼으로 끊는다)
 let lastSeq = -1;
+const PASSCODE_KEY = "aiOffice.passcode";
 let managerSpeech = "";
 
 // ── 초기화 ───────────────────────────────
@@ -37,6 +38,7 @@ init();
 async function init() {
   const config = await fetch("/api/config").then((r) => r.json());
   liveAvailable = config.liveAvailable;
+  needsPasscode = config.needsPasscode;
   try {
     office = new Office3D($("#office3d"), { onSelect: openAgentDialog });
   } catch (err) {
@@ -93,7 +95,7 @@ function setupMode(config) {
   const liveBtn = document.querySelector('.mode-switch [data-mode="live"]');
   if (!liveAvailable) {
     liveBtn.disabled = true;
-    liveBtn.title = ".env 파일에 ANTHROPIC_API_KEY를 넣고 서버를 다시 시작하면 쓸 수 있어요";
+    liveBtn.title = config.liveUnavailableReason || ".env 파일에 ANTHROPIC_API_KEY를 넣고 서버를 다시 시작하면 쓸 수 있어요";
   }
   const hint = () => {
     $("#modeHint").textContent =
@@ -112,7 +114,8 @@ function setupMode(config) {
       hint();
     });
   }
-  if (liveAvailable) liveBtn.click();
+  // 접속 코드가 필요한 공개 배포에서는 비용이 없는 데모로 시작한다
+  if (liveAvailable && !needsPasscode) liveBtn.click();
   hint();
 }
 
@@ -139,28 +142,97 @@ async function onSubmit(e) {
   const task = $("#task").value.trim();
   if (!task) return $("#task").focus();
 
+  const headers = { "Content-Type": "application/json" };
+  if (mode === "live" && needsPasscode) {
+    const code = getPasscode();
+    if (!code) return;
+    headers["X-Office-Passcode"] = code;
+  }
+
   resetOffice();
   setBusy(true);
+  controller = new AbortController();
+  const signal = controller.signal;
   try {
-    const res = await fetch("/api/jobs", {
+    const res = await fetch("/api/run", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ task, mode }),
+      signal,
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "작업을 시작하지 못했습니다.");
-    currentJob = data.id;
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.code === "bad_passcode") forgetPasscode();
+      throw new Error(data.error || "작업을 시작하지 못했습니다.");
+    }
     agents.get("manager").calls.push({ instruction: task, thinking: "", text: "", searches: [] });
-    listen(data.id);
+    await readStream(res.body);
+    // 작업이 끝나기 전에 연결이 끊긴 경우 (서버 시간 제한 등)
+    if (controller && controller.signal === signal) {
+      handle({ seq: lastSeq + 1, type: "job_error", message: "서버와의 연결이 끊겼습니다. 업무 범위를 좁혀 다시 시도해 주세요." });
+    }
   } catch (err) {
-    addEntry({ kind: "error", icon: "⚠️", html: escapeHtml(err.message) });
-    setBusy(false);
+    if (signal.aborted) {
+      addEntry({ kind: "error", icon: "⏹️", html: "작업을 중단했습니다." });
+      for (const x of agents.values()) if (x.state !== "idle") setState(x.def.id, "idle");
+    } else {
+      addEntry({ kind: "error", icon: "⚠️", html: escapeHtml(err.message) });
+    }
+    finish();
   }
 }
 
-async function onCancel() {
-  if (!currentJob) return;
-  await fetch(`/api/jobs/${currentJob}/cancel`, { method: "POST" });
+function onCancel() {
+  controller?.abort();
+}
+
+function getPasscode() {
+  let code = "";
+  try {
+    code = sessionStorage.getItem(PASSCODE_KEY) || "";
+  } catch {
+    /* 저장소를 못 쓰는 환경이면 매번 묻는다 */
+  }
+  if (!code) {
+    code = (prompt("실제 AI 모드 접속 코드를 입력해 주세요.\n(API 비용이 발생하는 모드라 코드를 아는 사람만 쓸 수 있어요)") || "").trim();
+    if (code) {
+      try {
+        sessionStorage.setItem(PASSCODE_KEY, code);
+      } catch {
+        /* 무시 */
+      }
+    }
+  }
+  return code;
+}
+
+function forgetPasscode() {
+  try {
+    sessionStorage.removeItem(PASSCODE_KEY);
+  } catch {
+    /* 무시 */
+  }
+}
+
+// 서버가 한 줄에 하나씩 보내는 JSON 이벤트를 읽어 화면에 반영한다
+async function readStream(body) {
+  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue; // 연결 유지용 빈 줄
+      const event = JSON.parse(line);
+      if (event.seq <= lastSeq) continue;
+      lastSeq = event.seq;
+      handle(event);
+    }
+  }
 }
 
 function setBusy(busy) {
@@ -170,7 +242,6 @@ function setBusy(busy) {
 }
 
 function resetOffice() {
-  source?.close();
   lastSeq = -1;
   managerSpeech = "";
   feed.innerHTML = "";
@@ -183,16 +254,6 @@ function resetOffice() {
     setState(a.def.id, "idle");
     hideBubble(a, 0);
   }
-}
-
-function listen(jobId) {
-  source = new EventSource(`/api/jobs/${jobId}/events`);
-  source.onmessage = (msg) => {
-    const event = JSON.parse(msg.data);
-    if (event.seq <= lastSeq) return; // 재연결 시 서버가 처음부터 다시 보내므로 중복은 건너뛴다
-    lastSeq = event.seq;
-    handle(event);
-  };
 }
 
 // ── 이벤트 처리 ──────────────────────────
@@ -283,8 +344,7 @@ function handle(ev) {
 }
 
 function finish() {
-  source?.close();
-  currentJob = null;
+  controller = null;
   setBusy(false);
 }
 
