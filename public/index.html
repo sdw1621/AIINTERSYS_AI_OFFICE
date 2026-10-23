@@ -19,7 +19,7 @@
     </a>
     <nav class="nav" aria-label="메뉴">
       <a href="#/monitor" data-view="monitor"><span aria-hidden="true">📊</span> 모니터링</a>
-      <a href="#/office" data-view="office"><span aria-hidden="true">🏢</span> 사무실</a>
+      <a href="#/office" data-view="office"><span aria-hidden="true">🏙️</span> 타워</a>
       <a href="#/reports" data-view="reports"><span aria-hidden="true">🗂️</span> 보고함 <i class="badge" id="reportCount" hidden>0</i></a>
     </nav>
     <div class="topbar-right">
@@ -45,7 +45,8 @@
                 <span class="status-badge" id="statusBadge" data-status="idle">대기</span>
                 <h1 id="taskTitle">아직 지시한 업무가 없어요</h1>
               </div>
-              <div class="hero-meta" id="heroMeta">아래 입력창에 업무를 적으면 팀장이 일을 나누고 팀원들이 협업을 시작합니다.</div>
+              <div class="hero-meta" id="heroMeta">아래 입력창에 업무를 적으면 본부장이 팀장들에게 일을 나누고, 팀장들이 다시 팀원에게 맡겨 협업을 시작합니다.</div>
+              <div class="hero-materials" id="heroMaterials" hidden></div>
             </div>
             <div class="progress-row">
               <div class="progress" role="progressbar" aria-label="전체 진척도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
@@ -55,8 +56,8 @@
             </div>
             <ol class="stepper" id="stepper">
               <li data-step="0"><i></i><span>업무 접수</span></li>
-              <li data-step="1"><i></i><span>팀장 분배</span></li>
-              <li data-step="2"><i></i><span>팀원 작업</span></li>
+              <li data-step="1"><i></i><span>본부장 분배</span></li>
+              <li data-step="2"><i></i><span>팀별 작업</span></li>
               <li data-step="3"><i></i><span>최종 정리</span></li>
               <li data-step="4"><i></i><span>완료</span></li>
             </ol>
@@ -66,16 +67,16 @@
           <div class="kpis">
             <div class="kpi"><span>경과 시간</span><b id="kpiTime">00:00</b></div>
             <div class="kpi"><span>위임 업무</span><b id="kpiTasks">0 / 0</b></div>
-            <div class="kpi"><span>웹 검색</span><b id="kpiSearch">0회</b></div>
+            <div class="kpi"><span>자료 열람 · 검색</span><b id="kpiSearch">0 · 0</b></div>
             <div class="kpi"><span>예상 비용</span><b id="kpiCost">$0.000</b></div>
           </div>
 
           <article class="card">
             <div class="card-head">
-              <h2>팀원 현황</h2>
-              <a class="link" href="#/office">사무실에서 보기 →</a>
+              <h2>조직 현황 <span class="muted small" id="orgCount"></span></h2>
+              <a class="link" href="#/office">타워에서 보기 →</a>
             </div>
-            <div class="team" id="team"></div>
+            <div class="org" id="org"></div>
           </article>
 
           <article class="card">
@@ -84,7 +85,7 @@
               <div class="legend" id="legend"></div>
             </div>
             <div class="gantt" id="gantt">
-              <p class="empty">업무가 시작되면 팀원별로 언제 무엇을 했는지 시간 막대로 그려집니다.</p>
+              <p class="empty">업무가 시작되면 사람마다 언제 무엇을 했는지 팀별 시간 막대로 그려집니다.</p>
             </div>
           </article>
         </div>
@@ -95,7 +96,7 @@
             <button type="button" role="tab" class="tab" data-tab="result" aria-selected="false">최종 결과 <span class="dot" id="resultDot" hidden></span></button>
           </div>
           <div class="tab-panel feed" id="feed" role="tabpanel">
-            <p class="empty">팀장이 일을 나누고 팀원들이 조사·기획·작성·검토하는 과정이 시간순으로 쌓입니다.</p>
+            <p class="empty">본부장 → 팀장 → 팀원으로 일이 나뉘고 보고되는 과정이 시간순으로 쌓입니다.</p>
           </div>
           <div class="tab-panel markdown" id="result" role="tabpanel" hidden>
             <p class="empty">아직 결과가 없습니다.</p>
@@ -105,13 +106,16 @@
     </section>
 
     <!-- ── 3D 사무실 ───────────────────────── -->
-    <section class="view" id="view-office" data-view="office" aria-label="3D 사무실" hidden>
+    <section class="view" id="view-office" data-view="office" aria-label="3D 타워" hidden>
       <div class="office3d" id="office3d">
         <div class="hud">
-          <button type="button" data-cam="iso">입체</button>
-          <button type="button" data-cam="front">정면</button>
-          <button type="button" data-cam="top">위에서</button>
-          <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
+          <div class="floor-switch" id="floorSwitch" role="group" aria-label="층 선택"></div>
+          <div class="hud-row">
+            <button type="button" data-cam="iso">입체</button>
+            <button type="button" data-cam="top">위에서</button>
+            <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
+            <label title="일이 진행되는 층으로 화면을 자동으로 옮깁니다"><input type="checkbox" id="followWork" checked /> 일 따라가기</label>
+          </div>
         </div>
         <a class="office-status" id="officeStatus" href="#/monitor" hidden>
           <span class="office-status-task" id="officeTask"></span>
@@ -145,6 +149,9 @@
       <button type="button" data-mode="demo" class="active" role="radio" aria-checked="true">데모</button>
       <button type="button" data-mode="live" role="radio" aria-checked="false">실제 AI</button>
     </div>
+    <div class="attach-list" id="attachList" hidden></div>
+    <label class="attach-btn" for="fileInput" title="자료 첨부 (PDF · Word · hwpx · 엑셀 · CSV · 이미지)">📎<span class="sr-only">자료 첨부</span></label>
+    <input type="file" id="fileInput" multiple hidden />
     <label class="sr-only" for="task">팀에게 맡길 업무</label>
     <textarea id="task" rows="1" placeholder="팀에게 맡길 업무를 적어 주세요 — 예) 중소기업용 생성형 AI 도입 제안서 써줘"></textarea>
     <button type="button" id="cancelBtn" class="btn-ghost" hidden>중단</button>

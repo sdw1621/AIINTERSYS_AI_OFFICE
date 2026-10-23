@@ -3,10 +3,12 @@ import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
-import { AGENTS } from "./src/agents.js";
+import { AGENTS, TEAMS, FLOORS } from "./src/agents.js";
 import { Job } from "./src/jobs.js";
 import { runLiveJob, describeLiveConfig } from "./src/orchestrator.js";
 import { runDemoJob } from "./src/demo.js";
+import { normalizeMaterials } from "./src/materials.js";
+import { dbEnabled, reportFromJob, saveReport, listReports, getReport, deleteReport } from "./src/db.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -17,17 +19,23 @@ const HAS_KEY = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_A
 // 인터넷에 공개된 배포에서는 아무나 API 요금을 쓰지 못하도록 실제 모드에 접속 코드를 요구한다.
 const PASSCODE = process.env.OFFICE_PASSCODE || "";
 const LIVE_AVAILABLE = HAS_KEY && (!ON_VERCEL || Boolean(PASSCODE));
+// 공용 보고함(DB)도 공개 배포에서는 접속 코드가 있어야 읽고 쓸 수 있다 (자료 분석 결과가 담기므로)
+const DB_AVAILABLE = dbEnabled && (!ON_VERCEL || Boolean(PASSCODE));
 
 const app = express();
-app.use(express.json({ limit: "100kb" }));
+// 첨부 자료(텍스트·축소 이미지)가 함께 오므로 여유를 둔다. (Vercel 함수 요청 본문 상한은 약 4.5MB)
+app.use(express.json({ limit: "8mb" }));
 // Vercel에서는 public/ 폴더를 CDN이 직접 서빙하고, 로컬에서는 Express가 서빙한다.
 app.use(express.static(path.join(here, "public")));
 
 app.get("/api/config", (_req, res) => {
   res.json({
     agents: AGENTS,
+    teams: TEAMS,
+    floors: FLOORS,
     liveAvailable: LIVE_AVAILABLE,
-    needsPasscode: LIVE_AVAILABLE && Boolean(PASSCODE),
+    needsPasscode: Boolean(PASSCODE) && (LIVE_AVAILABLE || DB_AVAILABLE),
+    dbAvailable: DB_AVAILABLE,
     live: LIVE_AVAILABLE ? describeLiveConfig() : null,
     liveUnavailableReason: !HAS_KEY
       ? "서버에 ANTHROPIC_API_KEY가 설정되어 있지 않아요"
@@ -67,8 +75,13 @@ app.post("/api/run", async (req, res) => {
   if (wantsLive && !passcodeOk(req.get("x-office-passcode"))) {
     return res.status(401).json({ error: "접속 코드가 맞지 않습니다.", code: "bad_passcode" });
   }
+  const { materials, error: matError } = normalizeMaterials(req.body?.materials);
+  if (matError) return res.status(400).json({ error: matError });
   const mode = wantsLive ? "live" : "demo";
   const job = new Job(task, mode);
+  job.materials = materials;
+  // 공용 보고함 저장은 접속 코드를 아는 사람이 지시한 작업만
+  const canSave = DB_AVAILABLE && passcodeOk(req.get("x-office-passcode"));
 
   res.writeHead(200, {
     "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -92,14 +105,58 @@ app.post("/api/run", async (req, res) => {
   try {
     await run(job);
   } catch (err) {
-    if (clientGone) return; // 사용자가 중단했거나 창을 닫은 경우
-    if (!job.finished) {
+    // 사용자가 중단했거나 창을 닫은 경우는 오류로 기록하지 않는다
+    if (!clientGone && !job.finished) {
       console.error(`[job ${job.id}]`, err);
       job.emit("job_error", { message: friendlyError(err) });
     }
-  } finally {
-    clearInterval(ping);
-    res.end();
+  }
+  if (canSave && !clientGone && job.events.some((e) => e.type === "job_done")) {
+    try {
+      const report = reportFromJob(job);
+      await saveReport(report);
+      write(JSON.stringify({ seq: job.events.length, type: "saved", id: report.id, where: "db" }) + "\n");
+    } catch (err) {
+      console.error("[db save]", err);
+      write(JSON.stringify({ seq: job.events.length, type: "notice", message: "공용 보고함(DB) 저장에 실패해 이 브라우저에만 저장합니다." }) + "\n");
+    }
+  }
+  clearInterval(ping);
+  res.end();
+});
+
+// ── 공용 보고함 (Neon DB) ──────────────────
+function requireDb(req, res, next) {
+  if (!DB_AVAILABLE) return res.status(404).json({ error: "공용 보고함(DB)이 설정되어 있지 않습니다." });
+  if (!passcodeOk(req.get("x-office-passcode"))) return res.status(401).json({ error: "접속 코드가 맞지 않습니다.", code: "bad_passcode" });
+  next();
+}
+const dbError = (res, err) => {
+  console.error("[db]", err);
+  res.status(500).json({ error: "DB 처리 중 오류가 났습니다." });
+};
+app.get("/api/reports", requireDb, async (_req, res) => {
+  try {
+    res.json({ reports: await listReports() });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.get("/api/reports/:id", requireDb, async (req, res) => {
+  try {
+    const r = await getReport(req.params.id);
+    if (!r) return res.status(404).json({ error: "보고서를 찾을 수 없습니다." });
+    res.json(r);
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.delete("/api/reports/:id", requireDb, async (req, res) => {
+  try {
+    await deleteReport(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    dbError(res, err);
   }
 });
 
@@ -110,5 +167,6 @@ if (!ON_VERCEL) {
   app.listen(PORT, HOST, () => {
     console.log(`\n🏢 AI인터시스 AI 사무실: http://localhost:${PORT}`);
     console.log(HAS_KEY ? `   실제 모드 사용 가능 (${describeLiveConfig().model})` : "   API 키 없음 → 데모 모드만 사용 가능 (.env.example 참고)");
+    console.log(DB_AVAILABLE ? "   공용 보고함(Neon DB) 사용" : "   DB 없음 → 보고함은 브라우저에만 저장");
   });
 }

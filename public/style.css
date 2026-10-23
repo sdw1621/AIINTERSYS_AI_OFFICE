@@ -167,6 +167,30 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 .kpi span { font-size: 12px; color: var(--muted); }
 .kpi b { font-size: 20px; font-variant-numeric: tabular-nums; }
 
+/* 조직 현황: 팀별 묶음 */
+.org { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 12px; }
+.team-block { border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); overflow: hidden; min-width: 0; }
+.team-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; background: color-mix(in srgb, var(--c) 13%, var(--surface)); border-bottom: 1px solid var(--border); }
+.team-head b { font-size: 13.5px; color: color-mix(in srgb, var(--c) 70%, var(--text)); }
+.team-head span { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.person {
+  width: 100%; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 2px 9px; align-items: center; text-align: left;
+  padding: 8px 12px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text);
+}
+.person:last-child { border-bottom: 0; }
+.person:hover { background: var(--surface); }
+.person img { grid-row: 1 / span 2; width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 2px solid var(--c); }
+.person.lead img { width: 32px; height: 32px; }
+.person-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person-name small { font-weight: 400; color: var(--muted); font-size: 11.5px; margin-left: 4px; }
+.person .state-chip { grid-row: 1; grid-column: 3; font-size: 11px; padding: 1px 7px 1px 6px; }
+.person-activity { grid-column: 2 / span 2; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person.member { padding-left: 22px; }
+.person.member img { width: 26px; height: 26px; }
+.hero-materials { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.hero-materials[hidden] { display: none; }
+.hero-materials span { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
+
 /* 팀원 카드 */
 .team { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .member {
@@ -204,11 +228,14 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 
 /* 간트 타임라인 */
 .gantt { position: relative; --who-w: 132px; }
-.g-row { display: grid; grid-template-columns: var(--who-w) minmax(0, 1fr); align-items: center; gap: 10px; height: 38px; }
+.g-row { display: grid; grid-template-columns: var(--who-w) minmax(0, 1fr); align-items: center; gap: 10px; height: 30px; }
+.g-team { font-size: 11.5px; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, var(--text)); padding: 8px 0 2px; border-top: 1px dashed var(--border); }
+.g-team:first-child { border-top: 0; padding-top: 0; }
+.g-row.member .g-who { padding-left: 12px; font-weight: 500; }
 .g-who { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; min-width: 0; }
 .g-who img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; border: 2px solid var(--c); flex: none; }
 .g-who span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.g-track { position: relative; height: 22px; border-radius: 6px; background: repeating-linear-gradient(90deg, transparent 0 calc(var(--tick, 10%) - 1px), var(--border) calc(var(--tick, 10%) - 1px) var(--tick, 10%)), var(--surface-2); }
+.g-track { position: relative; height: 20px; border-radius: 6px; background: repeating-linear-gradient(90deg, transparent 0 calc(var(--tick, 10%) - 1px), var(--border) calc(var(--tick, 10%) - 1px) var(--tick, 10%)), var(--surface-2); }
 .g-seg { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; min-width: 2px; }
 .g-seg[data-state="thinking"] { background: var(--s-thinking); }
 .g-seg[data-state="searching"] { background: var(--s-searching); }
@@ -264,7 +291,17 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 .office-error { padding: 24px; color: #fff; }
 .office-legend { margin-top: 10px; padding: 0 4px; }
 
-.hud { position: absolute; z-index: 2; top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.hud { position: absolute; z-index: 2; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; max-width: calc(100% - 24px); }
+.hud-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.floor-switch { display: flex; flex-wrap: wrap; gap: 4px; background: rgba(20, 16, 40, 0.55); padding: 4px; border-radius: 14px; }
+.floor-switch button { border: 0; background: transparent; color: #fff; font-size: 12.5px; font-weight: 700; padding: 6px 11px; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.floor-switch button:hover { background: rgba(255,255,255,0.14); }
+.floor-switch button.active { background: #fff; color: #1a1f2e; }
+.floor-switch .busy { width: 7px; height: 7px; border-radius: 50%; background: var(--s-working); animation: pulse 0.9s infinite; }
+.floor-switch .busy[hidden] { display: none; }
+.floor-tag3d { transform: translate(-50%, -50%); pointer-events: auto; cursor: pointer; white-space: nowrap; font-size: 13px; font-weight: 800; color: #fff; background: rgba(20, 16, 40, 0.72); border: 1px solid rgba(255,255,255,0.35); padding: 5px 12px; border-radius: 999px; box-shadow: 0 4px 14px rgba(0,0,0,0.3); }
+.floor-tag3d:hover { background: rgba(30, 64, 175, 0.9); }
+.floor-tag3d small { font-weight: 600; opacity: 0.8; margin-left: 6px; }
 .hud button, .hud label {
   border: 1px solid rgba(255,255,255,0.6); background: rgba(255,255,255,0.9); color: #1a1f2e;
   border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
@@ -337,7 +374,7 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 /* ── 업무 지시창 ───────────────────── */
 .commandbar {
   position: fixed; z-index: 30; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%);
-  width: min(980px, calc(100vw - 32px)); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px;
+  width: min(980px, calc(100vw - 32px)); display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px;
   background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(14px);
   border: 1px solid var(--border); border-radius: 22px; padding: 8px; box-shadow: 0 10px 40px rgba(40, 30, 20, 0.18);
 }
@@ -347,7 +384,26 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 }
 .commandbar textarea:focus { outline: none; }
 .commandbar:focus-within { border-color: var(--brand-2); box-shadow: 0 10px 40px rgba(40, 30, 20, 0.18), 0 0 0 3px var(--brand-soft); }
-.mode-hint { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); padding: 0 8px 2px; }
+.commandbar > .mode-switch, .commandbar > .attach-btn, .commandbar > textarea, .commandbar > #cancelBtn, .commandbar > .btn-primary { grid-row: 2; }
+.mode-hint { grid-row: 3; grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); padding: 0 8px 2px; }
+.attach-list { grid-row: 1; grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 2px 4px; max-height: 92px; overflow-y: auto; }
+.attach-list[hidden] { display: none; }
+.attach-btn {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; cursor: pointer; font-size: 18px;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.attach-btn:hover { border-color: var(--brand-2); }
+.att {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font-size: 12px; padding: 4px 6px 4px 10px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--text); border: 1px solid transparent;
+}
+.att b { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att small { color: var(--muted); white-space: nowrap; }
+.att button { border: 0; background: transparent; color: var(--muted); padding: 0 4px; font-size: 14px; line-height: 1; }
+.att.loading { background: var(--surface-2); border-color: var(--border); }
+.att.loading small::after { content: " …"; }
+.att.error { background: color-mix(in srgb, var(--s-error) 10%, transparent); border-color: color-mix(in srgb, var(--s-error) 35%, transparent); }
+.att.error small { color: var(--s-error); white-space: normal; }
 .mode-switch { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 3px; }
 .mode-switch button { border: 0; background: transparent; color: var(--muted); padding: 7px 11px; border-radius: 11px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
 .mode-switch button.active { background: var(--brand); color: #fff; }
@@ -421,11 +477,13 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
   .stepper span { font-size: 11px; }
   .gantt { --who-w: 26px; }
   .g-who span { display: none; }
-  .commandbar { grid-template-columns: auto minmax(0, 1fr) auto auto; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); border-radius: 18px; gap: 6px; }
-  .commandbar textarea { grid-column: 1 / -1; grid-row: 1; padding: 8px 8px 4px; font-size: 15px; }
-  .commandbar .mode-switch { grid-row: 2; grid-column: 1; }
-  .commandbar #cancelBtn { grid-row: 2; grid-column: 3; }
-  .commandbar .btn-primary { grid-row: 2; grid-column: 4; padding: 10px 16px; }
+  .commandbar { grid-template-columns: auto auto minmax(0, 1fr) auto auto; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); border-radius: 18px; gap: 4px 6px; }
+  .commandbar > textarea { grid-column: 1 / -1; grid-row: 2; padding: 8px 8px 4px; font-size: 15px; }
+  .commandbar > .mode-switch { grid-row: 3; grid-column: 1; }
+  .commandbar > .attach-btn { grid-row: 3; grid-column: 2; width: 36px; height: 36px; }
+  .commandbar > #cancelBtn { grid-row: 3; grid-column: 4; }
+  .commandbar > .btn-primary { grid-row: 3; grid-column: 5; padding: 10px 16px; }
+  .att b { max-width: 150px; }
   .mode-hint { display: none; }
   .mode-switch button { padding: 6px 10px; }
   .office3d { height: min(calc(100vh - var(--top-h) - var(--cmd-h) - 80px), 118vw); min-height: 340px; border-radius: 16px; }
