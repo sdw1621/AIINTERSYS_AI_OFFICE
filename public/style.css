@@ -180,39 +180,16 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 .person:last-child { border-bottom: 0; }
 .person:hover { background: var(--surface); }
 .person img { grid-row: 1 / span 2; width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 2px solid var(--c); }
-.person.lead img { width: 32px; height: 32px; }
+.person.p-lead img { width: 32px; height: 32px; }
 .person-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .person-name small { font-weight: 400; color: var(--muted); font-size: 11.5px; margin-left: 4px; }
 .person .state-chip { grid-row: 1; grid-column: 3; font-size: 11px; padding: 1px 7px 1px 6px; }
 .person-activity { grid-column: 2 / span 2; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.person.member { padding-left: 22px; }
-.person.member img { width: 26px; height: 26px; }
+.person.p-member { padding-left: 22px; }
+.person.p-member img { width: 26px; height: 26px; }
 .hero-materials { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .hero-materials[hidden] { display: none; }
 .hero-materials span { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
-
-/* 팀원 카드 */
-.team { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.member {
-  border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: var(--surface-2); text-align: left;
-  display: flex; flex-direction: column; gap: 8px; color: var(--text); min-width: 0; position: relative; overflow: hidden;
-}
-.member::after { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--c); opacity: 0.85; }
-.member:hover { border-color: var(--c); }
-.member-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.member-top img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 2px solid var(--c); flex: none; }
-.member-name { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-.member-name b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.member-name small { font-size: 11.5px; color: var(--muted); }
-.state-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; align-self: flex-start; padding: 2px 9px 2px 7px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
-.state-chip .state-dot { width: 8px; height: 8px; }
-.member-activity {
-  font-size: 12px; color: var(--muted); line-height: 1.45; min-height: 35px;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere;
-}
-.member-foot { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.mini-bar { flex: 1; height: 5px; border-radius: 999px; background: var(--border); overflow: hidden; }
-.mini-bar i { display: block; height: 100%; width: 0; background: var(--c); border-radius: inherit; transition: width 0.4s; }
 
 /* 상태 점 */
 .state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--s-idle); flex: none; display: inline-block; }
@@ -231,7 +208,7 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 .g-row { display: grid; grid-template-columns: var(--who-w) minmax(0, 1fr); align-items: center; gap: 10px; height: 30px; }
 .g-team { font-size: 11.5px; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, var(--text)); padding: 8px 0 2px; border-top: 1px dashed var(--border); }
 .g-team:first-child { border-top: 0; padding-top: 0; }
-.g-row.member .g-who { padding-left: 12px; font-weight: 500; }
+.g-row.g-sub .g-who { padding-left: 12px; font-weight: 500; }
 .g-who { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; min-width: 0; }
 .g-who img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; border: 2px solid var(--c); flex: none; }
 .g-who span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

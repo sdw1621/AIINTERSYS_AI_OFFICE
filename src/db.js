@@ -45,7 +45,11 @@ export function reportFromJob(job) {
     .map((e) => {
       const x = { type: e.type, t: e.t - t0 };
       for (const k of ["agent", "state", "from", "to", "query", "name"]) if (e[k] !== undefined) x[k] = e[k];
-      if (e.type === "report") x.chars = e.text?.length || 0;
+      if (e.type === "report") {
+        x.chars = e.text?.length || 0;
+        x.text = (e.text || "").slice(0, 1500);
+      }
+      if (e.type === "delegate") x.instruction = (e.instruction || "").slice(0, 600);
       return x;
     });
   return {

@@ -34,7 +34,10 @@ const DONE_WORK = {
   researcher: "리서치팀 조사를", planner: "기획팀 설계를", writer: "콘텐츠팀 초안 작성을", reviewer: "품질검토팀 검토를",
   secretary: "자료 정리를", strategist: "전략 분석을",
 };
-const EXPECTED_TASKS = 8; // 진척도 계산 시 최소한 이만큼의 위임이 있다고 가정
+const EXPECTED_TASKS = 8;
+const MODE_LABEL = { live: "실제 AI", demo: "데모", claude: "지피·구독" };
+const modeLabel = (m) => MODE_LABEL[m] || m;
+let replayTimers = []; // 진척도 계산 시 최소한 이만큼의 위임이 있다고 가정
 
 let office = null; // Office3D
 let config = null;
@@ -70,7 +73,7 @@ async function init() {
   liveAvailable = config.liveAvailable;
   needsPasscode = config.needsPasscode;
   try {
-    office = new Office3D($("#office3d"), { onSelect: openAgentDialog, floors: config.floors, onFloor: paintFloorButtons });
+    office = new Office3D($("#office3d"), { onSelect: openAgentDialog, floors: config.floors, teams: config.teams, onFloor: paintFloorButtons });
   } catch (err) {
     console.error(err);
     $("#office3d").insertAdjacentHTML("beforeend", `<p class="office-error">이 브라우저에서는 3D 화면(WebGL)을 표시할 수 없습니다. 모니터링 화면에서 진행 상황을 확인할 수 있어요.</p>`);
@@ -118,7 +121,7 @@ function buildAgent(def) {
   office?.addAgent(def);
   const el = document.createElement("button");
   el.type = "button";
-  el.className = `person ${def.lead && def.lead !== "manager" ? "member" : "lead"}`;
+  el.className = `person ${def.lead && def.lead !== "manager" ? "p-member" : "p-lead"}`;
   el.style.setProperty("--c", def.color);
   el.innerHTML = `<img src="${def.photo}" alt="" />
     <span class="person-name">${def.name} ${def.title}<small>${def.role}</small></span>
@@ -404,6 +407,7 @@ async function onSubmit(e) {
 function onCancel() {
   controller?.abort();
 }
+// (다시 보기 중에는 controller.abort가 stopReplay를 부른다)
 
 function storedPasscode() {
   try {
@@ -483,6 +487,8 @@ function resetRun() {
 
 function finish() {
   controller = null;
+  replayTimers.forEach(clearTimeout);
+  replayTimers = [];
   setBusy(false);
 }
 
@@ -633,7 +639,7 @@ function handle(ev) {
       run.stage = 4;
       endRun("done");
       renderResult(ev.result);
-      saveLocalReport();
+      if (!run.replay) saveLocalReport();
       addEntry({ kind: "milestone", icon: "✅", html: `<span class="who">최종 결과 완성</span><div>‘최종 결과’ 탭과 보고함에서 볼 수 있어요.</div>` });
       announce(`모든 업무를 다 했습니다. ${shortTask()} 결과를 요약하면, ${summarize(ev.result, 110)}. 자세한 내용은 보고함에서 확인하세요.`, "final");
       office?.focusFloor(3);
@@ -769,7 +775,7 @@ function renderMonitor() {
   badge.textContent = RUN_LABEL[status];
   $("#taskTitle").textContent = run.task || "아직 지시한 업무가 없어요";
   $("#heroMeta").textContent = run.t0
-    ? `${run.mode === "live" ? "실제 AI" : "데모"} · ${run.model} · ${clock(run.t0)} 시작${run.t1 ? ` · ${clock(run.t1)} ${RUN_LABEL[status]}` : ""}`
+    ? `${modeLabel(run.mode)} · ${run.model} · ${clock(run.t0)} 시작${run.t1 ? ` · ${clock(run.t1)} ${RUN_LABEL[status]}` : ""}`
     : "아래 입력창에 업무를 적으면 본부장이 팀장들에게 일을 나누고, 팀장들이 다시 팀원에게 맡겨 협업을 시작합니다.";
   const hm = $("#heroMaterials");
   hm.hidden = !run.materials.length;
@@ -844,7 +850,7 @@ function renderGantt(now) {
       .join("");
     const marks = a.marks.map((m) => `<span class="g-mark" style="left:${pct(m.t)}" title="${escapeHtml(m.title)}">${m.icon}</span>`).join("");
     const isMember = a.def.lead && a.def.lead !== "manager";
-    rows += `<div class="g-row${isMember ? " member" : ""}" style="--c:${a.def.color}">
+    rows += `<div class="g-row${isMember ? " g-sub" : ""}" style="--c:${a.def.color}">
         <div class="g-who"><img src="${a.def.photo}" alt="" /><span>${a.def.name} · ${a.def.role}</span></div>
         <div class="g-track" style="--tick:${tick}%">${segs}${marks}</div>
       </div>`;
@@ -898,6 +904,38 @@ function renderResult(md) {
   resultEl.innerHTML = resultActions(md, ` <a class="btn-ghost" href="#/reports" style="text-decoration:none">보고함에서 보기</a>`) + renderMarkdown(md);
   wireResultActions(resultEl, md, "AI사무실_결과");
   if (resultEl.hidden) $("#resultDot").hidden = false;
+}
+
+// ── 다시 보기: 저장된 작업 기록(타임라인)을 모니터링·타워에 재생한다 ──
+// 실제 걸린 시간이 길면 45초 안에 끝나도록 빠르게 돌린다.
+function replayReport(r) {
+  if (controller) return alert("진행 중인 작업이 끝난 뒤에 다시 보기를 할 수 있어요.");
+  const tl = r.timeline || [];
+  const total = Math.max(1000, tl.at(-1)?.t || 1000);
+  const speed = Math.max(1, total / 45000);
+  resetRun();
+  run.replay = true;
+  setBusy(true);
+  $("#submitBtn").textContent = `다시 보는 중 (×${Math.round(speed)})`;
+  controller = { abort: stopReplay };
+  location.hash = "#/monitor";
+  let seq = 0;
+  handle({ seq: seq++, type: "job_started", id: r.id, task: r.task, mode: r.mode, model: `${r.model} · 다시 보기 ×${Math.round(speed)}`, materials: r.materials || [] });
+  for (const e of tl) {
+    const ev = { ...e, seq: 0 };
+    if (e.type === "report" && ev.text === undefined) ev.text = `(보고 ${e.chars || 0}자 — 전문은 최종 결과 참고)`;
+    if (e.type === "delegate" && ev.instruction === undefined) ev.instruction = "(지시 내용은 저장되지 않았어요)";
+    replayTimers.push(setTimeout(() => handle({ ...ev, seq: seq++ }), e.t / speed));
+  }
+  replayTimers.push(setTimeout(() => handle({ seq: seq++, type: "job_done", result: r.result || "", totalCost: r.cost || 0 }), total / speed + 800));
+}
+
+function stopReplay() {
+  replayTimers.forEach(clearTimeout);
+  replayTimers = [];
+  endRun("cancelled");
+  addEntry({ kind: "error", icon: "⏹️", html: "다시 보기를 멈췄습니다." });
+  finish();
 }
 
 // ── 보고함: 이 브라우저(로컬) + 공용(Neon DB) ──
@@ -990,7 +1028,7 @@ function renderReportList() {
     .map(
       (r) => `<button type="button" class="report-item${r.id === selectedReport ? " active" : ""}" data-id="${r.id}">
         <b>${escapeHtml(r.task)}</b>
-        <span class="row"><span class="tag${r.mode === "live" ? " live" : ""}">${r.mode === "live" ? "실제 AI" : "데모"}</span>
+        <span class="row"><span class="tag${r.mode === "demo" ? "" : " live"}">${modeLabel(r.mode)}</span>
         <span>${r.source === "db" ? "🗄️" : "💻"}</span>
         <span>${dateTime(r.startedAt)}</span><span>⏱ ${duration(r.durationMs)}</span><span>위임 ${r.delegations}건</span>${
           r.materials?.length ? `<span>📎 ${r.materials.length}</span>` : ""}</span>
@@ -1022,13 +1060,14 @@ async function renderReportDetail(r) {
   el.innerHTML = `<div class="detail-head">
       <div>
         <h2>${escapeHtml(r.task)}</h2>
-        <div class="muted small">${r.source === "db" ? "🗄️ 공용 보고함" : "💻 이 브라우저"} · ${r.mode === "live" ? "실제 AI" : "데모"} · ${escapeHtml(r.model)} · ${dateTime(r.startedAt)} · 소요 ${duration(r.durationMs)} · 위임 ${r.delegations}건 · 검색 ${r.searches}회 · ${r.costDemo ? "~" : ""}$${(r.cost || 0).toFixed(3)}</div>
+        <div class="muted small">${r.source === "db" ? "🗄️ 공용 보고함" : "💻 이 브라우저"} · ${modeLabel(r.mode)} · ${escapeHtml(r.model)} · ${dateTime(r.startedAt)} · 소요 ${duration(r.durationMs)} · 위임 ${r.delegations}건 · 검색 ${r.searches}회 · ${r.costDemo ? "~" : ""}$${(r.cost || 0).toFixed(3)}</div>
         ${r.materials?.length ? `<div class="hero-materials">${r.materials.map((m) => `<span>📎 ${escapeHtml(m.name)}</span>`).join("")}</div>` : ""}
       </div>
     </div>
-    ${resultActions(r.result || "", ` <button type="button" class="btn-ghost" data-act="again">같은 업무 다시 지시</button> <button type="button" class="btn-ghost" data-act="delete">삭제</button>`)}
+    ${resultActions(r.result || "", `${r.timeline?.length ? ` <button type="button" class="btn-primary" data-act="replay">▶ 모니터링에서 다시 보기</button>` : ""} <button type="button" class="btn-ghost" data-act="again">같은 업무 다시 지시</button> <button type="button" class="btn-ghost" data-act="delete">삭제</button>`)}
     <div class="markdown">${renderMarkdown(r.result)}</div>`;
   wireResultActions(el, r.result || "", "AI사무실_" + r.task.slice(0, 20).replace(/[\\/:*?"<>|\s]+/g, "_"));
+  el.querySelector('[data-act="replay"]')?.addEventListener("click", () => replayReport(r));
   el.querySelector('[data-act="again"]').addEventListener("click", () => {
     $("#task").value = r.task;
     autoGrow();
