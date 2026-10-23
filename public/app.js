@@ -22,6 +22,8 @@ const S = {
   announced: new Set(),
   reports: null,
   selectedReport: null,
+  chat: { messages: [], insights: null, days: null, error: null, loading: false },
+  replay: null,
 };
 let office = null;
 let officeLoading = null;
@@ -86,6 +88,20 @@ async function load() {
     }))
     .filter((e) => S.byId[e.project] && !Number.isNaN(e.startMs))
     .sort((a, b) => a.startMs - b.startMs);
+  S.calEvents = S.events;
+  mergeDeadlines();
+}
+
+// 단톡방에서 뽑은 마감일을 KRISO 일정으로 함께 보여 준다
+function mergeDeadlines() {
+  const ins = S.chat.insights;
+  const extra = (ins?.deadlines || [])
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date || ""))
+    .map((d, i) => {
+      const start = Date.parse(d.date + "T00:00:00+09:00");
+      return { id: `chat-deadline-${i}`, project: "kriso", title: `[마감] ${d.title}`, description: `${d.note || ""}\n(단톡방 ${String(d.from || "").replace("T", " ")} 대화에서 정리)`, location: "", allDay: true, start: d.date, startMs: start, endMs: start + DAY, people: ["yang", "shin", "leebu", "leejh"], deadline: true };
+    });
+  S.events = [...(S.calEvents || []), ...extra].sort((a, b) => a.startMs - b.startMs);
 }
 
 // ── 잠금 ──
@@ -122,6 +138,7 @@ async function start() {
   $("#app").hidden = false;
   renderAll();
   route();
+  loadChat();
 }
 
 // ── 일정 계산 ──
@@ -141,7 +158,7 @@ const STATUS_TEXT = { now: "진행 중", soon: "이번 주 일정", planned: "�
 
 // 사람이 시각 t에 어디 있는가: 진행 중인 일정의 층, 없으면 자기 자리(가장 위층 배정)
 function whereIs(personId, t) {
-  const ev = S.events.find((e) => e.people.includes(personId) && e.startMs <= t && t < e.endMs);
+  const ev = S.events.find((e) => !e.deadline && e.people.includes(personId) && e.startMs <= t && t < e.endMs);
   const homeProject = S.projects.find((p) => p.members.some((m) => m.id === personId));
   if (ev) {
     const p = S.byId[ev.project];
@@ -420,6 +437,7 @@ function ensureOffice() {
       office.finishBuild();
       buildFloorButtons();
       syncOffice(true);
+      setupReplay();
       return office;
     })
     .catch((err) => {
@@ -444,7 +462,7 @@ function paintFloorButtons(n) {
 
 // 시각 t(기본: 지금)에 맞춰 사람들을 옮긴다
 function syncOffice(instant) {
-  if (!office) return;
+  if (!office || S.replay) return;
   const t = S.virtual ?? now();
   const moves = [];
   for (const id of Object.keys(S.people)) {
@@ -578,6 +596,203 @@ function checkReminders() {
   }
 }
 
+// ── KRISO 단톡방: 대화 · 업무 보드 · 타워 재생 ──
+async function loadChat() {
+  try {
+    const [c, ins] = await Promise.all([api("/api/chat?limit=60"), api("/api/insights")]);
+    S.chat.messages = c.messages;
+    S.chat.insights = ins.insights;
+    S.chat.error = null;
+  } catch (err) {
+    S.chat.error = err.message;
+  }
+  mergeDeadlines();
+  renderChat();
+  renderBoard();
+  renderKpis();
+  renderProjects();
+  renderTimeline();
+  renderUpcoming();
+}
+
+function chatAvatar(m) {
+  const p = S.people[m.person];
+  if (p) return `<img src="${p.photo}" alt="" />`;
+  return `<span class="ch-ini">${esc((m.who || "?").replace(/대표님|님/g, "").slice(0, 2))}</span>`;
+}
+function chatBody(m) {
+  if (m.kind === "file") return `<span class="ch-file">📎 ${esc(m.text.replace(/^파일: /, ""))}</span>`;
+  if (m.kind === "photo") return `<span class="ch-muted">🖼️ 사진</span>`;
+  if (m.kind === "deleted") return `<span class="ch-muted">삭제된 메시지</span>`;
+  if (m.kind === "link") return `<a href="${esc(m.text)}" target="_blank" rel="noopener noreferrer">🔗 ${esc(m.text.length > 60 ? m.text.slice(0, 60) + "…" : m.text)}</a>`;
+  const t = m.text.length > 400 ? m.text.slice(0, 400) + "…" : m.text;
+  return esc(t);
+}
+function renderChat() {
+  const card = $("#chatCard");
+  card.hidden = false;
+  const box = $("#chat");
+  if (S.chat.error) {
+    box.innerHTML = `<p class="empty">${esc(S.chat.error)}</p>`;
+    return;
+  }
+  const list = S.chat.messages;
+  $("#chatCount").textContent = list.length ? `최근 ${list.length}건` : "";
+  if (!list.length) {
+    box.innerHTML = `<p class="empty">아직 쌓인 대화가 없어요. 카카오톡에서 대화 내보내기 한 .txt 파일을 올려 주세요.</p>`;
+    return;
+  }
+  let lastDay = "";
+  box.innerHTML = `<button type="button" class="link-btn ch-more" id="chatMore">이전 대화 더 보기</button>` + list.map((m) => {
+    const ms = Date.parse(m.t);
+    const day = ymdK(ms);
+    const sep = day !== lastDay ? `<div class="ch-day">${md(ms)}(${wd(ms)})</div>` : "";
+    lastDay = day;
+    if (m.kind === "system") return `${sep}<div class="ch-sys">${esc(m.text)}</div>`;
+    const mine = m.person === "shin";
+    return `${sep}<div class="ch-msg${mine ? " mine" : ""}">${mine ? "" : `<div class="ch-av">${chatAvatar(m)}</div>`}<div class="ch-col">${mine ? "" : `<b class="ch-who">${esc(S.people[m.person]?.name || m.who)}</b>`}<div class="ch-row"><div class="ch-bub">${chatBody(m)}</div><time>${hm(ms)}</time></div></div></div>`;
+  }).join("");
+  box.scrollTop = box.scrollHeight;
+  $("#chatMore").onclick = async () => {
+    try {
+      const more = (await api(`/api/chat?limit=80&before=${encodeURIComponent(S.chat.messages[0].t)}`)).messages;
+      if (!more.length) return ($("#chatMore").textContent = "처음 대화까지 다 봤어요");
+      const h = box.scrollHeight;
+      S.chat.messages = [...more, ...S.chat.messages];
+      renderChat();
+      box.scrollTop = box.scrollHeight - h;
+    } catch (err) {
+      $("#chatMore").textContent = err.message;
+    }
+  };
+}
+$("#chatFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const st = $("#chatStatus");
+  st.hidden = false;
+  st.textContent = `${file.name} 읽는 중…`;
+  try {
+    const text = await file.text();
+    const r = await api("/api/chat/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ room: "kriso", text }) });
+    st.textContent = `✅ ${r.parsed.toLocaleString()}건 중 새 메시지 ${r.inserted.toLocaleString()}건을 쌓았어요 (누적 ${r.total.toLocaleString()}건)`;
+    S.chat.days = null;
+    await loadChat();
+    if (isVoiceEnabled()) announce(`단톡방 새 메시지 ${r.inserted}건을 쌓았어요.`, "done");
+  } catch (err) {
+    st.textContent = `⚠️ ${err.message}`;
+  }
+});
+
+function renderBoard() {
+  const ins = S.chat.insights;
+  $("#boardCard").hidden = !ins;
+  if (!ins) return;
+  const t = now();
+  const when = ins.analyzedAt ? `${md(Date.parse(ins.analyzedAt))} ${hm(Date.parse(ins.analyzedAt))} 정리` : "";
+  $("#boardMeta").textContent = when;
+  const link = $("#sheetLink");
+  link.hidden = !ins.sheetUrl;
+  if (ins.sheetUrl) link.href = ins.sheetUrl;
+  const ST = { todo: ["할 일", "todo"], doing: ["진행 중", "doing"], done: ["완료", "done"] };
+  const order = ["shin", "yang", "leejh", "leebu"];
+  const byWho = order.map((id) => ({ id, tasks: ins.tasks.filter((x) => x.who === id) })).filter((g) => g.tasks.length);
+  const deadlines = (ins.deadlines || []).map((d) => {
+    const ms = d.date ? Date.parse(d.date + "T00:00:00+09:00") : null;
+    return `<li><span class="chip-s" style="--c:#0E7490">${ms ? dDay(ms, t) : "미정"}</span> <b>${esc(d.title)}</b> <small class="muted">${d.date ? md(ms) + "(" + wd(ms) + ")" : ""} ${esc(d.note || "")}</small></li>`;
+  }).join("");
+  $("#board").innerHTML = `
+    <div class="bd-summary"><span class="p-status" data-status="soon" style="--c:#0E7490">${esc(ins.stage || "")}</span><p>${esc(ins.summary || "")}</p></div>
+    <div class="bd-grid">
+      ${byWho.map((g) => {
+        const p = S.people[g.id];
+        return `<section class="bd-col" style="--c:${p.color}"><h4><img src="${p.photo}" alt="" />${esc(p.name)} <small>${g.tasks.filter((x) => x.status !== "done").length}건 남음</small></h4>
+          <ul>${g.tasks.map((x) => `<li class="bd-task" data-status="${x.status}"><span class="bd-st">${ST[x.status]?.[0] || x.status}</span><div><b>${esc(x.title)}</b>${x.detail ? `<small>${esc(x.detail)}</small>` : ""}<small class="bd-src">근거 ${esc(String(x.from || "").slice(5, 16).replace("T", " "))} 대화</small></div></li>`).join("")}</ul></section>`;
+      }).join("")}
+    </div>
+    <div class="bd-lower">
+      <section><h4>마감</h4><ul class="bd-list">${deadlines}</ul></section>
+      <section><h4>결정 사항</h4><ul class="bd-list">${(ins.decisions || []).map((d) => `<li><small class="muted">${md(Date.parse(d.date + "T00:00:00+09:00"))}</small> ${esc(d.text)}</li>`).join("")}</ul></section>
+    </div>
+    ${ins.open?.length ? `<p class="small bd-open">확인 필요: ${ins.open.map(esc).join(" · ")}</p>` : ""}`;
+}
+
+// 타워: 하루치 단톡방 대화를 5층 회의 테이블에서 말풍선으로 재생
+async function setupReplay() {
+  try {
+    if (!S.chat.days) S.chat.days = await api("/api/chat/days");
+  } catch {
+    return;
+  }
+  const days = S.chat.days.days.filter((d) => d.n >= 3);
+  if (!days.length) return;
+  $("#replayRow").hidden = false;
+  $("#replayDay").innerHTML = days.map((d) => `<option value="${d.day}">${d.day.slice(5).replace("-", "/")} · ${d.n}건</option>`).join("");
+  const busy = days.find((d) => d.n >= 12);
+  if (busy) $("#replayDay").value = busy.day;
+}
+$("#replayBtn").addEventListener("click", () => (S.replay ? stopReplay() : startReplay($("#replayDay").value)));
+
+async function startReplay(day) {
+  if (!office || !day) return;
+  unlock();
+  let msgs;
+  try {
+    msgs = (await api(`/api/chat?day=${day}`)).messages.filter((m) => m.kind !== "system");
+  } catch (err) {
+    $("#officeWhat").textContent = err.message;
+    return;
+  }
+  if (!msgs.length) return;
+  const kriso = S.byId.kriso;
+  S.replay = { timer: null };
+  $("#replayBtn").textContent = "■ 재생 멈춤";
+  $("#officeNow").hidden = true;
+  office.focusFloor(kriso.floor);
+  const members = kriso.members.map((m) => m.id);
+  members.forEach((id, k) => {
+    office.hideBubble(id);
+    office.setState(id, "moving");
+    office.moveTo(id, { floor: kriso.floor, kind: "meeting", slot: k }).then(() => office.setState(id, "present"));
+  });
+  const d = Date.parse(day + "T00:00:00+09:00");
+  $("#officeWhen").textContent = `${md(d)}(${wd(d)}) 단톡방`;
+  if (isVoiceEnabled()) announce(`${md(d).replace("/", "월 ")}일 단톡방 대화 ${msgs.length}건을 재생할게요.`, "step");
+  let i = 0;
+  let last = null;
+  const step = () => {
+    if (!S.replay) return;
+    if (i >= msgs.length) return stopReplay(true);
+    const m = msgs[i++];
+    const who = m.person && members.includes(m.person) ? m.person : null;
+    if (last && last !== who) {
+      office.hideBubble(last);
+      office.setState(last, "present");
+    }
+    const text = m.kind === "text" ? m.text.replace(/\s+/g, " ") : m.kind === "file" ? "📎 " + m.text.replace(/^파일: /, "") : m.kind === "photo" ? "🖼️ 사진" : m.kind === "link" ? "🔗 링크 공유" : "(삭제된 메시지)";
+    const short = text.length > 90 ? text.slice(0, 90) + "…" : text;
+    if (who) {
+      office.showBubble(who, "say", short);
+      office.setState(who, "meeting");
+    }
+    last = who;
+    $("#officeWhat").textContent = `${hm(Date.parse(m.t))} ${S.people[m.person]?.name || m.who}: ${short}`;
+    const dur = Math.min(4200, Math.max(1500, 900 + short.length * 38));
+    S.replay.timer = setTimeout(step, dur);
+  };
+  S.replay.timer = setTimeout(step, 2600);
+}
+function stopReplay(finished = false) {
+  if (!S.replay) return;
+  clearTimeout(S.replay.timer);
+  S.replay = null;
+  $("#replayBtn").textContent = "▶ 단톡방 대화 재생";
+  for (const id of Object.keys(S.people)) office?.hideBubble(id);
+  if (finished && isVoiceEnabled()) announce("단톡방 대화 재생을 마쳤어요.", "done");
+  syncOffice(false);
+}
+
 // ── 화면 전환 ──
 function route() {
   const name = (location.hash.match(/^#\/(\w+)/) || [])[1];
@@ -608,6 +823,7 @@ setInterval(async () => {
   try {
     await load();
     renderAll();
+    loadChat();
   } catch {}
 }, 5 * 60_000);
 

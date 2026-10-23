@@ -65,6 +65,14 @@
             <div class="projects" id="projects"></div>
           </article>
 
+          <article class="card" id="boardCard" hidden>
+            <div class="card-head">
+              <h2>KRISO 단톡방 업무 보드 <span class="muted small" id="boardMeta"></span></h2>
+              <a class="link" id="sheetLink" href="#" target="_blank" rel="noopener" hidden>구글 시트로 보기 ↗</a>
+            </div>
+            <div id="board"></div>
+          </article>
+
           <article class="card">
             <div class="card-head">
               <h2>일정 타임라인</h2>
@@ -88,6 +96,14 @@
             <div class="card-head"><h2>사람</h2><span class="muted small" id="peopleCount"></span></div>
             <div id="people" class="people"></div>
           </article>
+          <article class="card chat-card" id="chatCard" hidden>
+            <div class="card-head">
+              <h2>💬 KRISO 단톡방 <span class="muted small" id="chatCount"></span></h2>
+              <label class="btn-ghost sm upload-btn" title="카카오톡 → 대화방 메뉴 → 대화 내보내기로 받은 .txt 파일">대화 파일 올리기<input type="file" id="chatFile" accept=".txt,text/plain" hidden /></label>
+            </div>
+            <p class="small chat-status" id="chatStatus" hidden></p>
+            <div class="chat" id="chat"></div>
+          </article>
           <article class="card cal-help" id="calHelp" hidden></article>
         </aside>
       </div>
@@ -103,6 +119,11 @@
             <button type="button" data-cam="top">위에서</button>
             <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
             <label title="사람이 층을 옮기면 화면도 따라갑니다"><input type="checkbox" id="followMove" checked /> 이동 따라가기</label>
+          </div>
+          <div class="hud-row replay-row" id="replayRow" hidden>
+            <label class="sr-only" for="replayDay">재생할 날짜</label>
+            <select id="replayDay"></select>
+            <button type="button" id="replayBtn">▶ 단톡방 대화 재생</button>
           </div>
         </div>
         <div class="office-status" id="officeStatus">

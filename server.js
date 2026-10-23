@@ -4,7 +4,8 @@ import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { PEOPLE, publicProjects } from "./src/projects.js";
 import { getEvents, calendarConfigured } from "./src/calendar.js";
-import { dbEnabled, listReports, getReport, deleteReport } from "./src/db.js";
+import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights } from "./src/db.js";
+import { parseKakao } from "./src/chat.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -15,7 +16,8 @@ const PASSCODE = process.env.OFFICE_PASSCODE || "";
 const LOCKED_OUT = ON_VERCEL && !PASSCODE; // 코드 없이 공개 배포된 경우: 데이터 API를 아예 닫는다
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+// 단톡방 대화 파일(수백 KB)을 받으므로 여유를 둔다. (Vercel 요청 본문 상한 약 4.5MB)
+app.use(express.json({ limit: "4mb" }));
 app.use(express.static(path.join(here, "public")));
 
 function passcodeOk(given) {
@@ -78,6 +80,100 @@ app.delete("/api/reports/:id", requireCode, requireDb, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     dbError(res, err);
+  }
+});
+
+// ── 단톡방 (카카오톡 대화 누적) ──
+const ROOMS = new Set(["kriso"]);
+const roomOf = (req) => (ROOMS.has(String(req.query.room || req.body?.room || "kriso")) ? String(req.query.room || req.body?.room || "kriso") : null);
+app.get("/api/chat", requireCode, requireDb, async (req, res) => {
+  const room = roomOf(req);
+  if (!room) return res.status(400).json({ error: "알 수 없는 대화방이에요." });
+  try {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(req.query.day || "") ? req.query.day : null;
+    const before = req.query.before && !Number.isNaN(Date.parse(req.query.before)) ? req.query.before : null;
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 60));
+    res.json({ room, messages: await listChat(room, { limit, before, day }) });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.get("/api/chat/days", requireCode, requireDb, async (req, res) => {
+  try {
+    res.json(await chatDays(roomOf(req) || "kriso"));
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+// 카카오톡 '대화 내보내기' 파일 내용을 그대로 받아 새 메시지만 쌓는다
+app.post("/api/chat/import", requireCode, requireDb, async (req, res) => {
+  const room = roomOf(req);
+  const text = typeof req.body?.text === "string" ? req.body.text : "";
+  if (!room || !text) return res.status(400).json({ error: "대화 파일 내용이 비어 있어요." });
+  const { title, messages } = parseKakao(text);
+  if (!messages.length) return res.status(400).json({ error: "카카오톡 대화 내보내기 형식이 아니에요." });
+  try {
+    const r = await importChat(room, messages);
+    res.json({ title, parsed: messages.length, ...r });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.get("/api/insights", requireCode, requireDb, async (req, res) => {
+  try {
+    res.json({ insights: await getInsights(roomOf(req) || "kriso") });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+
+// ── 구글 시트 연동: =IMPORTDATA("…/api/sheet/<탭>.csv?key=…") 로 시트가 직접 읽어 간다 ──
+const SHEET_KEY = process.env.SHEET_EXPORT_KEY || "";
+const csv = (rows) => rows.map((r) => r.map((v) => {
+  const s = v == null ? "" : String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}).join(",")).join("\r\n");
+const NAMES = { shin: "신동욱", yang: "양선희", leebu: "이부일", leejh: "이재현" };
+const STATUS = { todo: "할 일", doing: "진행 중", done: "완료" };
+const KIND = { text: "대화", file: "파일", photo: "사진", link: "링크", deleted: "삭제", system: "시스템" };
+app.get("/api/sheet/:tab.csv", async (req, res) => {
+  const given = Buffer.from(String(req.query.key || ""));
+  const want = Buffer.from(SHEET_KEY);
+  if (!SHEET_KEY || !dbEnabled || given.length !== want.length || !timingSafeEqual(given, want)) return res.status(404).send("not found");
+  try {
+    const room = "kriso";
+    let rows;
+    const ins = (await getInsights(room)) || {};
+    switch (req.params.tab) {
+      case "chat":
+        rows = [["날짜", "시각", "보낸 사람", "프로젝트 인원", "유형", "내용"], ...(await allChat(room)).map((m) => {
+          return [m.kst.slice(0, 10), m.kst.slice(11, 16), m.who || "(시스템)", NAMES[m.person] || "", KIND[m.kind] || m.kind, m.text.slice(0, 5000)];
+        })];
+        break;
+      case "tasks":
+        rows = [["담당", "상태", "업무", "내용", "근거(대화 시각)"], ...(ins.tasks || []).map((t) => [NAMES[t.who] || t.who, STATUS[t.status] || t.status, t.title, t.detail || "", (t.from || "").replace("T", " ")])];
+        break;
+      case "deadlines":
+        rows = [["날짜", "항목", "메모", "근거(대화 시각)"], ...(ins.deadlines || []).map((d) => [d.date || "확인 필요", d.title, d.note || "", (d.from || "").replace("T", " ")])];
+        break;
+      case "decisions":
+        rows = [["날짜", "결정"], ...(ins.decisions || []).map((d) => [d.date, d.text])];
+        break;
+      case "milestones":
+        rows = [["날짜", "내용"], ...(ins.milestones || []).map((d) => [d.date, d.text])];
+        break;
+      case "overview": {
+        const { total, days } = await chatDays(room);
+        rows = [["항목", "내용"], ["단톡방", ins.title || ""], ["현재 단계", ins.stage || ""], ["요약", ins.summary || ""], ["누적 메시지", total], ["대화 기간", days.length ? `${days.at(-1).day} ~ ${days[0].day}` : ""], ["분석 시각", (ins.analyzedAt || "").replace("T", " ").slice(0, 16)], ["확인 필요", (ins.open || []).join(" / ")]];
+        break;
+      }
+      default:
+        return res.status(404).send("not found");
+    }
+    res.set({ "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store" }).send(csv(rows));
+  } catch (err) {
+    console.error("[sheet]", err);
+    res.status(500).send("error");
   }
 });
 

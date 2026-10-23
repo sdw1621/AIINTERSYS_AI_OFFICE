@@ -111,3 +111,83 @@ export async function listEvents() {
   const syncedAt = rows.reduce((m, r) => (!m || r.synced_at > m ? r.synced_at : m), null);
   return { events, syncedAt: syncedAt ? new Date(syncedAt).toISOString() : null };
 }
+
+// ── 단톡방 대화 누적 (같은 시각·보낸 사람·내용은 한 번만) ──
+let chatReady = null;
+function ensureChat() {
+  chatReady ??= (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS office_chat (
+        id         BIGSERIAL PRIMARY KEY,
+        room       TEXT NOT NULL,
+        t          TIMESTAMPTZ NOT NULL,
+        who        TEXT NOT NULL,
+        person     TEXT,
+        kind       TEXT NOT NULL,
+        text       TEXT NOT NULL,
+        seq        INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS office_chat_uniq ON office_chat (room, t, who, md5(text))`;
+    await sql`CREATE INDEX IF NOT EXISTS office_chat_room_t ON office_chat (room, t DESC, seq DESC)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS office_insights (
+        room       TEXT PRIMARY KEY,
+        data       JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT now()
+      )`;
+  })().catch((err) => {
+    chatReady = null;
+    throw err;
+  });
+  return chatReady;
+}
+
+export async function importChat(room, messages) {
+  await ensureChat();
+  let inserted = 0;
+  for (let i = 0; i < messages.length; i += 400) {
+    const part = messages.slice(i, i + 400);
+    const rows = await sql`
+      INSERT INTO office_chat (room, t, who, person, kind, text, seq)
+      SELECT ${room}, x.t::timestamptz, x.who, x.person, x.kind, x.text, x.seq
+      FROM jsonb_to_recordset(${JSON.stringify(part.map((m, k) => ({ t: m.t, who: m.who || "", person: m.person, kind: m.kind, text: m.text, seq: i + k })))}::jsonb)
+        AS x(t text, who text, person text, kind text, text text, seq int)
+      ON CONFLICT (room, t, who, md5(text)) DO NOTHING
+      RETURNING id`;
+    inserted += rows.length;
+  }
+  const [{ total, first, last }] = await sql`SELECT count(*)::int AS total, min(t) AS first, max(t) AS last FROM office_chat WHERE room = ${room}`;
+  return { inserted, total, first, last };
+}
+
+export async function listChat(room, { limit = 60, before = null, day = null } = {}) {
+  await ensureChat();
+  const rows = day
+    ? await sql`SELECT t, who, person, kind, text FROM office_chat WHERE room = ${room} AND (t AT TIME ZONE 'Asia/Seoul')::date = ${day}::date ORDER BY t, seq, id`
+    : before
+      ? await sql`SELECT t, who, person, kind, text FROM office_chat WHERE room = ${room} AND t < ${before} ORDER BY t DESC, seq DESC, id DESC LIMIT ${limit}`
+      : await sql`SELECT t, who, person, kind, text FROM office_chat WHERE room = ${room} ORDER BY t DESC, seq DESC, id DESC LIMIT ${limit}`;
+  const list = day ? rows : rows.reverse();
+  return list.map((r) => ({ ...r, t: new Date(r.t).toISOString() }));
+}
+
+export async function chatDays(room) {
+  await ensureChat();
+  const rows = await sql`
+    SELECT (t AT TIME ZONE 'Asia/Seoul')::date::text AS day, count(*)::int AS n
+    FROM office_chat WHERE room = ${room} AND kind <> 'system' GROUP BY 1 ORDER BY 1 DESC`;
+  const [{ total }] = await sql`SELECT count(*)::int AS total FROM office_chat WHERE room = ${room}`;
+  return { days: rows, total };
+}
+
+export async function allChat(room) {
+  await ensureChat();
+  return sql`SELECT to_char(t AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD"T"HH24:MI') AS kst, who, person, kind, text FROM office_chat WHERE room = ${room} ORDER BY t, seq, id`;
+}
+
+export async function getInsights(room) {
+  await ensureChat();
+  const rows = await sql`SELECT data, updated_at FROM office_insights WHERE room = ${room}`;
+  return rows[0] ? { ...rows[0].data, updatedAt: new Date(rows[0].updated_at).toISOString() } : null;
+}
