@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>AI인터시스 AI 사무실</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏢</text></svg>" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>AIINTERSYS AI TOWER</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏙️</text></svg>" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#/monitor" aria-label="AI 사무실 홈">
+    <a class="brand" href="#/monitor" aria-label="AI 타워 홈">
       <span class="brand-mark">AI</span>
       <span class="brand-text">
-        <b>AIINTERSYS AI OFFICE</b>
-        <small>Claude 에이전트 팀이 일하는 가상 사무실</small>
+        <b>AIINTERSYS AI TOWER</b>
+        <small>프로젝트 · 사람 · 일정 현황</small>
       </span>
     </a>
     <nav class="nav" aria-label="메뉴">
@@ -23,89 +24,76 @@
       <a href="#/reports" data-view="reports"><span aria-hidden="true">🗂️</span> 보고함 <i class="badge" id="reportCount" hidden>0</i></a>
     </nav>
     <div class="topbar-right">
-      <button type="button" class="sound-btn" id="soundBtn" aria-pressed="true" title="단계가 끝날 때 알림음과 음성으로 요약해 알려 줍니다">🔊 <span>음성 알림</span></button>
-      <a class="live-pill" id="livePill" href="#/monitor" data-status="idle">
-        <i class="live-dot"></i><span id="liveText">대기 중</span>
-      </a>
-      <div class="meter" title="이번 작업의 예상 API 비용">
-        <span class="meter-label">비용</span>
-        <span id="cost">$0.000</span>
-      </div>
+      <button type="button" class="sound-btn" id="soundBtn" aria-pressed="true" title="일정 시작 10분 전과 시작할 때 알림음과 음성으로 알려 줍니다">🔊 <span>음성 알림</span></button>
+      <button type="button" class="cal-pill" id="calPill" data-source="none" title="일정 출처"><i class="live-dot"></i><span id="calText">캘린더</span></button>
+      <div class="clock" id="clock" aria-live="off"></div>
     </div>
   </header>
 
-  <main>
-    <!-- ── 모니터링 (첫 화면) ───────────────── -->
+  <!-- ── 잠금 화면 ── -->
+  <div class="lock" id="lock" hidden>
+    <form class="lock-card card" id="lockForm" autocomplete="off">
+      <span class="brand-mark big">AI</span>
+      <h1>AIINTERSYS AI TOWER</h1>
+      <p class="muted">실제 프로젝트와 일정이 담겨 있어 접속 코드가 필요해요.</p>
+      <label class="sr-only" for="lockCode">접속 코드</label>
+      <input type="password" id="lockCode" placeholder="접속 코드" autocomplete="current-password" required />
+      <button type="submit" class="btn-primary">들어가기</button>
+      <p class="lock-error" id="lockError" hidden></p>
+    </form>
+  </div>
+
+  <main id="app" hidden>
+    <!-- ── 모니터링 ── -->
     <section class="view" id="view-monitor" data-view="monitor" aria-label="모니터링">
       <div class="mon-grid">
         <div class="mon-main">
           <article class="card hero" id="hero">
-            <div class="hero-head">
-              <div class="hero-title">
-                <span class="status-badge" id="statusBadge" data-status="idle">대기</span>
-                <h1 id="taskTitle">아직 지시한 업무가 없어요</h1>
-              </div>
-              <div class="hero-meta" id="heroMeta">아래 입력창에 업무를 적으면 본부장이 팀장들에게 일을 나누고, 팀장들이 다시 팀원에게 맡겨 협업을 시작합니다.</div>
-              <div class="hero-materials" id="heroMaterials" hidden></div>
-            </div>
-            <div class="progress-row">
-              <div class="progress" role="progressbar" aria-label="전체 진척도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar">
-                <div class="progress-fill" id="progressFill"></div>
-              </div>
-              <b class="progress-num" id="progressNum">0%</b>
-            </div>
-            <ol class="stepper" id="stepper">
-              <li data-step="0"><i></i><span>업무 접수</span></li>
-              <li data-step="1"><i></i><span>본부장 분배</span></li>
-              <li data-step="2"><i></i><span>팀별 작업</span></li>
-              <li data-step="3"><i></i><span>최종 정리</span></li>
-              <li data-step="4"><i></i><span>완료</span></li>
-            </ol>
-            <div class="examples" id="examples"></div>
+            <div class="hero-eyebrow" id="heroEyebrow">지금</div>
+            <h1 id="heroTitle">일정을 불러오는 중…</h1>
+            <div class="hero-meta" id="heroMeta"></div>
+            <div class="hero-actions" id="heroActions"></div>
           </article>
 
-          <div class="kpis">
-            <div class="kpi"><span>경과 시간</span><b id="kpiTime">00:00</b></div>
-            <div class="kpi"><span>위임 업무</span><b id="kpiTasks">0 / 0</b></div>
-            <div class="kpi"><span>자료 열람 · 검색</span><b id="kpiSearch">0 · 0</b></div>
-            <div class="kpi"><span>예상 비용</span><b id="kpiCost">$0.000</b></div>
-          </div>
+          <div class="kpis" id="kpis"></div>
 
           <article class="card">
             <div class="card-head">
-              <h2>조직 현황 <span class="muted small" id="orgCount"></span></h2>
+              <h2>프로젝트 <span class="muted small">층 = 프로젝트</span></h2>
               <a class="link" href="#/office">타워에서 보기 →</a>
             </div>
-            <div class="org" id="org"></div>
+            <div class="projects" id="projects"></div>
           </article>
 
           <article class="card">
             <div class="card-head">
-              <h2>업무 타임라인</h2>
-              <div class="legend" id="legend"></div>
+              <h2>일정 타임라인</h2>
+              <div class="tl-nav">
+                <button type="button" class="btn-ghost sm" data-shift="-7" aria-label="한 주 앞으로">◀</button>
+                <button type="button" class="btn-ghost sm" data-shift="0">이번 주</button>
+                <button type="button" class="btn-ghost sm" data-shift="7" aria-label="한 주 뒤로">▶</button>
+              </div>
             </div>
-            <div class="gantt" id="gantt">
-              <p class="empty">업무가 시작되면 사람마다 언제 무엇을 했는지 팀별 시간 막대로 그려집니다.</p>
-            </div>
+            <div class="tl-wrap"><div class="tl" id="timeline"></div></div>
+            <p class="small muted tl-hint">칸을 누르면 일정 내용을 보고, 그 시각의 타워로 이동할 수 있어요.</p>
           </article>
         </div>
 
-        <aside class="card mon-side">
-          <div class="tabs" role="tablist">
-            <button type="button" role="tab" class="tab active" data-tab="feed" aria-selected="true">진행 기록</button>
-            <button type="button" role="tab" class="tab" data-tab="result" aria-selected="false">최종 결과 <span class="dot" id="resultDot" hidden></span></button>
-          </div>
-          <div class="tab-panel feed" id="feed" role="tabpanel">
-            <p class="empty">본부장 → 팀장 → 팀원으로 일이 나뉘고 보고되는 과정이 시간순으로 쌓입니다.</p>
-          </div>
-          <div class="tab-panel markdown" id="result" role="tabpanel" hidden>
-            <p class="empty">아직 결과가 없습니다.</p>
-          </div>
+        <aside class="mon-side">
+          <article class="card">
+            <div class="card-head"><h2>다가오는 일정</h2><span class="muted small">2주</span></div>
+            <div id="upcoming" class="upcoming"></div>
+          </article>
+          <article class="card">
+            <div class="card-head"><h2>사람</h2><span class="muted small" id="peopleCount"></span></div>
+            <div id="people" class="people"></div>
+          </article>
+          <article class="card cal-help" id="calHelp" hidden></article>
         </aside>
       </div>
     </section>
 
-    <!-- ── 3D 사무실 ───────────────────────── -->
+    <!-- ── 3D 타워 ── -->
     <section class="view" id="view-office" data-view="office" aria-label="3D 타워" hidden>
       <div class="office3d" id="office3d">
         <div class="hud">
@@ -114,52 +102,37 @@
             <button type="button" data-cam="iso">입체</button>
             <button type="button" data-cam="top">위에서</button>
             <label><input type="checkbox" id="autoRotate" /> 자동 회전</label>
-            <label title="일이 진행되는 층으로 화면을 자동으로 옮깁니다"><input type="checkbox" id="followWork" checked /> 일 따라가기</label>
+            <label title="사람이 층을 옮기면 화면도 따라갑니다"><input type="checkbox" id="followMove" checked /> 이동 따라가기</label>
           </div>
         </div>
-        <a class="office-status" id="officeStatus" href="#/monitor" hidden>
-          <span class="office-status-task" id="officeTask"></span>
-          <span class="office-status-bar"><i id="officeFill"></i></span>
-          <b id="officePct">0%</b>
-        </a>
+        <div class="office-status" id="officeStatus">
+          <span class="office-when" id="officeWhen">지금</span>
+          <span class="office-what" id="officeWhat"></span>
+          <button type="button" id="officeNow" hidden>지금으로</button>
+        </div>
       </div>
-      <div class="legend office-legend" id="officeLegend"></div>
+      <div class="legend office-legend">
+        <span><i class="state-dot" data-state="present"></i>자리</span>
+        <span><i class="state-dot" data-state="meeting"></i>일정 중</span>
+        <span><i class="state-dot" data-state="moving"></i>이동 중</span>
+      </div>
     </section>
 
-    <!-- ── 보고함 ──────────────────────────── -->
+    <!-- ── 보고함 ── -->
     <section class="view" id="view-reports" data-view="reports" aria-label="보고함" hidden>
       <div class="reports">
         <div class="card reports-list">
-          <div class="card-head">
-            <h2>보고함</h2>
-            <span class="muted small">이 브라우저에 저장된 최근 결과</span>
-          </div>
-          <div id="reportList"></div>
+          <div class="card-head"><h2>보고함</h2><span class="muted small">프로젝트 분석 · 정리 자료</span></div>
+          <div id="reportList"><p class="empty">불러오는 중…</p></div>
         </div>
-        <article class="card reports-detail" id="reportDetail">
+        <article class="card reports-detail markdown" id="reportDetail">
           <p class="empty">왼쪽에서 보고서를 고르면 내용이 여기에 표시됩니다.</p>
         </article>
       </div>
     </section>
   </main>
 
-  <!-- ── 업무 지시창 (모든 화면 하단 고정) ───── -->
-  <form class="commandbar" id="taskForm" autocomplete="off">
-    <div class="mode-switch" role="radiogroup" aria-label="실행 모드">
-      <button type="button" data-mode="demo" class="active" role="radio" aria-checked="true">데모</button>
-      <button type="button" data-mode="live" role="radio" aria-checked="false">실제 AI</button>
-    </div>
-    <div class="attach-list" id="attachList" hidden></div>
-    <label class="attach-btn" for="fileInput" title="자료 첨부 (PDF · Word · hwpx · 엑셀 · CSV · 이미지)">📎<span class="sr-only">자료 첨부</span></label>
-    <input type="file" id="fileInput" multiple hidden />
-    <label class="sr-only" for="task">팀에게 맡길 업무</label>
-    <textarea id="task" rows="1" placeholder="팀에게 맡길 업무를 적어 주세요 — 예) 중소기업용 생성형 AI 도입 제안서 써줘"></textarea>
-    <button type="button" id="cancelBtn" class="btn-ghost" hidden>중단</button>
-    <button type="submit" id="submitBtn" class="btn-primary">업무 지시</button>
-    <span class="mode-hint" id="modeHint">데모: 정해진 대본으로 흐름만 보여줍니다</span>
-  </form>
-
-  <dialog id="agentDialog" class="agent-dialog">
+  <dialog id="dialog" class="agent-dialog">
     <div class="dialog-head">
       <div id="dialogTitle"></div>
       <button type="button" class="btn-ghost" id="dialogClose" aria-label="닫기">✕</button>

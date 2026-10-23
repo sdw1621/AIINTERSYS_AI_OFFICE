@@ -1,7 +1,6 @@
-// 3D 타워: Three.js로 3개 층(3F 총괄 본부 · 2F 리서치/기획 · 1F 콘텐츠/검토)짜리 미래형 유리 타워와
-// 15명의 캐릭터를 코드로 직접 모델링한다 (외부 3D 파일 없음). 층을 고르면 위층을 걷어내고 그 층을 들여다본다.
-// 사람은 다른 층으로 갈 때 유리 엘리베이터를 탄다.
-// app.js는 공개 메서드(addAgent, finishBuild, setState, showBubble, hideBubble, visit, focusFloor, resetView, setActive)만 쓴다.
+// 3D 타워: 프로젝트 하나에 층 하나인 미래형 유리 타워와 실제 구성원 캐릭터를 코드로 모델링한다 (외부 3D 파일 없음).
+// 층을 고르면 위층을 걷어내고 그 층을 들여다본다. 사람은 일정에 따라 유리 엘리베이터를 타고 층을 옮긴다.
+// app.js는 공개 메서드(addPerson, finishBuild, setState, setLabel, showBubble, hideBubble, moveTo, focusFloor, resetView, setActive)만 쓴다.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -15,24 +14,24 @@ const V = (x, z, y = 0) => new THREE.Vector3(x, y, z);
 const ROOM_W = 18;
 const ROOM_D = 13;
 const FLOOR_H = 4.4;
-const FLOORS = 3;
+let FLOORS = 5; // 생성자에서 프로젝트 수로 정한다
 const floorY = (f) => (f - 1) * FLOOR_H;
-const ROOF_Y = floorY(FLOORS + 1);
+let ROOF_Y = floorY(FLOORS + 1);
 
-// 3F 본부장실
-const MANAGER_ROOM = { x0: -2.9, x1: 2.9, z0: -ROOM_D / 2, z1: -2.4, door: 0.8 };
-const DOOR_OUT = V(0, -1.7);
 const AISLE_Z = 0; // 층마다 가운데를 가로지르는 통로
 // 유리 엘리베이터 (왼쪽 뒤 구석)
 const LIFT = V(-8.0, -4.5);
 const LIFT_DOOR = V(-6.7, -4.5);
-const TABLE3 = V(0, 3.5); // 3F 회의 테이블
+const TABLE = V(-3.6, 3.6); // 층마다 회의 테이블
+const LECTERN = V(2.05, 3.7); // PBL 층 강의 화면 앞
 const WALK_SPEED = 2.8;
-const LIFT_SPEED = 3.2;
-const REPORT_ORDER = ["secretary", "strategist", "researcher", "planner", "writer", "reviewer"];
+const LIFT_SPEED = 4.2;
 
 const STATE_COLOR = {
   idle: 0x64748b,
+  present: 0x3b82f6,
+  meeting: 0x10b981,
+  moving: 0xf59e0b,
   thinking: 0x8b5cf6,
   searching: 0x0ea5e9,
   working: 0x10b981,
@@ -147,17 +146,19 @@ function bake(group) {
 }
 
 export class Office3D {
-  constructor(container, { onSelect, onFloor, floors = [], teams = {} } = {}) {
+  constructor(container, { onSelect, onFloor, projects = [] } = {}) {
+    FLOORS = Math.max(1, projects.length);
+    ROOF_Y = floorY(FLOORS + 1);
     this.container = container;
     this.onSelect = onSelect;
     this.onFloor = onFloor;
-    this.floorInfo = floors;
-    this.teams = teams;
+    this.projects = projects;
+    this.floorInfo = projects.map((p) => ({ floor: p.floor, name: `${p.floor}F ${p.short}`, project: p }));
     this.agents = new Map();
     this.clock = new THREE.Clock();
     this.tmp = new THREE.Vector3();
     this.active = true;
-    this.focus = 0; // 0 = 타워 전체, 1~3 = 그 층
+    this.focus = 0; // 0 = 타워 전체, n = 그 층
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -197,9 +198,7 @@ export class Office3D {
 
     this.buildLights();
     for (let f = 1; f <= FLOORS; f++) this.buildFloorShell(f);
-    this.buildHQ(this.floorGroups[3]);
-    this.buildTeamFloor(2, this.floorGroups[2]);
-    this.buildTeamFloor(1, this.floorGroups[1]);
+    for (const info of this.floorInfo) this.buildProjectFloor(info.floor, this.floorGroups[info.floor], info.project);
     this.buildExterior();
     this.buildFloorTags();
     this.setupPicking();
@@ -236,11 +235,12 @@ export class Office3D {
     this.exterior.visible = n === 0 || n === 1;
     for (const t of this.floorTagObjs || []) t.visible = n === 0;
     const dir = this.view === "top" ? new THREE.Vector3(0.0001, 1, 0.0001) : new THREE.Vector3(1, 1.08, 1.12);
-    const fit = n === 0 ? { h: 34, w: 30 } : this.view === "top" ? { h: 15.5, w: 21 } : { h: 14.5, w: 26 };
-    const target = n === 0 ? V(0, 0.3, 6.4) : V(0, 0.3, floorY(n) + 0.4);
+    const extra = Math.max(0, FLOORS - 3);
+    const fit = n === 0 ? { h: 34 + extra * 6.2, w: 30 + extra * 2 } : this.view === "top" ? { h: 15.5, w: 21 } : { h: 14.5, w: 26 };
+    const target = n === 0 ? V(0, 0.3, 6.4 + extra * 2.2) : V(0, 0.3, floorY(n) + 0.4);
     this.camGoal = { target, dir: dir.normalize(), fit };
     // 그림자 범위도 보는 곳에 맞춘다
-    const s = n === 0 ? 22 : 14;
+    const s = n === 0 ? 22 + extra * 4 : 14;
     Object.assign(this.sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
     this.sun.shadow.camera.updateProjectionMatrix();
     this.sun.target.position.copy(target);
@@ -484,120 +484,124 @@ export class Office3D {
     return g;
   }
 
-  // ── 3F 총괄 본부: 본부장실 · 로고 벽 · 회의 테이블 · 카페 바 · 라운지 ──
-  buildHQ(g) {
-    const { x0, x1, z0, z1, door } = MANAGER_ROOM;
-    const glass = new THREE.MeshPhysicalMaterial({ color: 0xfff1e0, transparent: true, opacity: 0.16, roughness: 0.05, transmission: 0.6, depthWrite: false });
-    const frame = mat(0xb08a62, { roughness: 0.5 });
-    const h = 2.2;
-    const pane = (len, x, z, rotY) => {
-      const p = mesh(new THREE.BoxGeometry(len, h, 0.04), glass, { x, y: h / 2, z, cast: false });
-      p.rotation.y = rotY;
-      p.userData.keep = true;
-      g.add(p);
-      const top = box(len, 0.06, 0.08, frame, { x, y: h, z });
-      top.rotation.y = rotY;
-      g.add(top);
-    };
-    const depth = z1 - z0;
-    pane(depth, x0, (z0 + z1) / 2, Math.PI / 2);
-    pane(depth, x1, (z0 + z1) / 2, Math.PI / 2);
-    const side = x1 - door;
-    pane(side, -door - side / 2, z1, 0);
-    pane(side, door + side / 2, z1, 0);
-    for (const px of [x0, x1, -door, door]) g.add(box(0.08, h, 0.08, frame, { x: px, y: h / 2, z: z1 }));
-
-    // 나무 루버 벽 + 로고
-    const wallW = x1 - x0 + 0.2;
-    g.add(box(wallW, 3.2, 0.16, mat(0xf6efe6, { roughness: 0.9 }), { y: 1.6, z: z0 - 0.02 }));
-    for (let i = 0; i < 26; i++) g.add(box(0.09, 3.2, 0.06, mat(i % 2 ? 0xc79a6b : 0xb98a5e, { roughness: 0.7 }), { x: -wallW / 2 + 0.12 + i * ((wallW - 0.24) / 25), y: 1.6, z: z0 + 0.08 }));
-    const logo = textTexture("AIINTERSYS", { w: 1024, h: 320, size: 120, radius: 30, sub: "A I   T O W E R  ·  H Q" });
-    g.add(mesh(new THREE.PlaneGeometry(3, 0.94), new THREE.MeshStandardMaterial({ map: logo, emissive: 0xffffff, emissiveMap: logo, emissiveIntensity: 0.45 }), { y: 2.3, z: z0 + 0.13, cast: false }));
-    const rug = mesh(roundedRect(x1 - x0 - 0.7, depth - 0.9, 0.3), mat(0x2f4a8a, { roughness: 1, side: THREE.DoubleSide }), { y: 0.006, z: (z0 + z1) / 2 + 0.1, cast: false });
+  // ── 프로젝트 층: 뒤쪽 구성원 책상 줄 · 간판 · 왼쪽 앞 회의 테이블 · 프로젝트별 공간 ──
+  buildProjectFloor(f, g, p) {
+    const color = new THREE.Color(p.color);
+    const tint = new THREE.Color(0xf6dcc0).lerp(color, 0.36).getHex();
+    const rug = mesh(roundedRect(15.6, 4.4, 0.8), mat(tint, { roughness: 1, side: THREE.DoubleSide }), { x: 1.4, y: 0.005, z: -3.7, cast: false });
     rug.rotation.x = -Math.PI / 2;
     g.add(rug);
+    // 뒤쪽 간판
+    const sub = p.group ? `${f}F · ${p.group}` : `${f}F · ${p.title || "프로젝트"}`;
+    const tex = textTexture(p.short, { w: 1024, h: 230, size: 98, radius: 36, bg: p.color, sub });
+    g.add(mesh(new THREE.PlaneGeometry(4.6, 1.03), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.32 }), { x: 1.4, y: 2.85, z: -ROOM_D / 2 + 0.12, cast: false }));
+    g.add(box(4.8, 0.08, 0.1, mat(0x2a2f3d), { x: 1.4, y: 2.28, z: -ROOM_D / 2 + 0.1 }));
 
-    // 회의 테이블 (앞쪽 가운데)
-    const tr = mesh(new THREE.CircleGeometry(1.9, 48), mat(0xf3d2b3, { roughness: 1, side: THREE.DoubleSide }), { x: TABLE3.x, y: 0.006, z: TABLE3.z, cast: false });
+    // 회의 테이블 (왼쪽 앞)
+    const tr = mesh(new THREE.CircleGeometry(1.9, 48), mat(new THREE.Color(0xf3d2b3).lerp(color, 0.15).getHex(), { roughness: 1, side: THREE.DoubleSide }), { x: TABLE.x, y: 0.006, z: TABLE.z, cast: false });
     tr.rotation.x = -Math.PI / 2;
     g.add(tr);
-    g.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.07, 48), mat(0xc58a55, { roughness: 0.45 }), { x: TABLE3.x, y: 0.74, z: TABLE3.z }));
-    g.add(mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 16), mat(0x5b4636), { x: TABLE3.x, y: 0.36, z: TABLE3.z }));
+    g.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.07, 48), mat(0xc58a55, { roughness: 0.45 }), { x: TABLE.x, y: 0.74, z: TABLE.z }));
+    g.add(mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 16), mat(0x5b4636), { x: TABLE.x, y: 0.36, z: TABLE.z }));
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + 0.25;
-      const chair = this.makeChair(0xf08a4b, 0.8);
-      chair.position.set(TABLE3.x + Math.sin(a) * 1.28, 0, TABLE3.z + Math.cos(a) * 1.28);
+      const chair = this.makeChair(new THREE.Color(p.color).lerp(new THREE.Color(0xf08a4b), 0.5).getHex(), 0.8);
+      chair.position.set(TABLE.x + Math.sin(a) * 1.28, 0, TABLE.z + Math.cos(a) * 1.28);
       chair.rotation.y = a + Math.PI;
       g.add(chair);
     }
-    this.addPlant(g, TABLE3.x, TABLE3.z, 0.35, 0.78);
+    this.addPlant(g, TABLE.x, TABLE.z, 0.35, 0.78);
 
-    // 카페 바 (오른쪽 뒤) + 주황 스툴 + 펜던트
-    const barZ = -ROOM_D / 2 + 0.6;
-    g.add(box(3.4, 0.95, 0.6, mat(0xf4ece1, { roughness: 0.6 }), { x: 6.2, y: 0.475, z: barZ }, 0.04));
-    g.add(box(3.5, 0.06, 0.7, mat(0xb98a5e, { roughness: 0.4 }), { x: 6.2, y: 0.98, z: barZ }));
-    g.add(box(0.42, 0.5, 0.36, mat(0x1f2937, { metalness: 0.5, roughness: 0.3 }), { x: 5.0, y: 1.26, z: barZ }, 0.04));
-    for (let i = 0; i < 4; i++) g.add(mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.1, 16), mat([0xffffff, 0x1e40af, 0xf59e0b, 0xf08a4b][i]), { x: 5.7 + i * 0.22, y: 1.06, z: barZ }));
-    for (let i = 0; i < 4; i++) {
-      const x = 5.0 + i * 0.8;
-      g.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 20), mat(0xf08a4b, { roughness: 0.6 }), { x, y: 0.72, z: barZ + 0.75 }));
-      g.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 10), mat(0x9ca3af, { metalness: 0.6 }), { x, y: 0.36, z: barZ + 0.75 }));
+    if (p.id === "kriso") {
+      // 지식그래프 대형 화면 + 자료 책장
+      this.addGraphScreen(g, 4.9, 3.5, p.color);
+      this.addBookshelf(g, -ROOM_W / 2 + 0.35, 1.0);
+    } else if (p.group) {
+      // PBL 교육장: 강의 화면 + 교육생 책상 2줄
+      this.addLectureArea(g, p);
+    } else {
+      // 상담 라운지
+      this.addSofa(g, 6.8, 5.2, Math.PI);
+      g.add(box(1.0, 0.34, 0.7, mat(0xb98a5e), { x: 6.8, y: 0.17, z: 3.9 }, 0.06));
+      this.addSofa(g, 6.8, 2.6, 0);
+      this.addWhiteboard(g, 2.4, 4.6);
+      this.addBookshelf(g, -ROOM_W / 2 + 0.35, 1.0);
     }
-    for (let i = 0; i < 3; i++) g.add(mesh(new THREE.SphereGeometry(0.13, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false }), { x: 5.0 + i * 1.2, y: 2.4, z: barZ, cast: false }));
-
-    // 라운지 (왼쪽 앞)
-    const lounge = mesh(roundedRect(3.4, 3.0, 0.8), mat(0xb9c6e6, { roughness: 1, side: THREE.DoubleSide }), { x: -6.9, y: 0.007, z: 4.6, cast: false });
-    lounge.rotation.x = -Math.PI / 2;
-    g.add(lounge);
-    this.addSofa(g, -8.25, 4.6, Math.PI / 2);
-    g.add(box(1.0, 0.34, 0.7, mat(0xb98a5e), { x: -6.9, y: 0.17, z: 4.6 }, 0.06));
-    for (const [x, z, c] of [[-5.6, 5.5, 0xf08a4b], [-5.6, 3.7, 0x6cbf62]]) {
-      const b = mesh(new THREE.SphereGeometry(0.42, 24, 16), mat(c, { roughness: 0.9 }), { x, y: 0.26, z });
-      b.scale.set(1, 0.62, 1);
-      g.add(b);
-    }
-    this.addBookshelf(g, -ROOM_W / 2 + 0.35, 0.6);
   }
 
-  // ── 2F·1F: 왼쪽·오른쪽에 팀 하나씩 ──────────
-  buildTeamFloor(f, g) {
-    const info = this.floorInfo.find((x) => x.floor === f);
-    const teamKeys = info?.teams || [];
-    teamKeys.forEach((key, i) => {
-      const team = this.teams[key];
-      if (!team) return;
-      const side = i === 0 ? -1 : 1;
-      const cx = side * 4.4;
-      // 팀 구역 바닥
-      const tint = new THREE.Color(0xf6dcc0).lerp(new THREE.Color(team.color), 0.42);
-      const rug = mesh(roundedRect(7.6, 11.2, 0.9), mat(tint.getHex(), { roughness: 1, side: THREE.DoubleSide }), { x: cx, y: 0.005, z: 0, cast: false });
-      rug.rotation.x = -Math.PI / 2;
-      g.add(rug);
-      // 뒤쪽 팀 간판
-      const tex = textTexture(team.name, { w: 768, h: 192, size: 92, radius: 40, bg: team.color, sub: `${f}F` });
-      const sign = mesh(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.3 }), { x: cx, y: 2.55, z: -ROOM_D / 2 + 0.12, cast: false });
-      g.add(sign);
-      g.add(box(3.4, 0.08, 0.1, mat(0x2a2f3d), { x: cx, y: 2.12, z: -ROOM_D / 2 + 0.1 }));
+  addGraphScreen(g, x, z, color) {
+    const tex = canvasTexture(768, 432, (c, w, h) => {
+      c.fillStyle = "#0b1726";
+      c.fillRect(0, 0, w, h);
+      const nodes = [];
+      for (let i = 0; i < 26; i++) nodes.push([60 + ((i * 197) % (w - 120)), 70 + ((i * 113) % (h - 120))]);
+      c.strokeStyle = "rgba(140,200,255,0.45)";
+      c.lineWidth = 2;
+      nodes.forEach(([x1, y1], i) => {
+        for (const j of [(i * 7 + 3) % nodes.length, (i * 11 + 5) % nodes.length]) {
+          c.beginPath();
+          c.moveTo(x1, y1);
+          c.lineTo(...nodes[j]);
+          c.stroke();
+        }
+      });
+      nodes.forEach(([x1, y1], i) => {
+        c.fillStyle = i % 5 === 0 ? color : i % 3 ? "#7dd3fc" : "#fbbf24";
+        c.beginPath();
+        c.arc(x1, y1, i % 5 === 0 ? 12 : 7, 0, Math.PI * 2);
+        c.fill();
+      });
+      c.fillStyle = "#e0f2fe";
+      c.font = "700 30px Pretendard, sans-serif";
+      c.fillText("MARITIME ONTOLOGY", 24, 40);
     });
-    // 두 팀 사이 낮은 화단 칸막이 (가운데 통로는 비워 둔다)
-    const planter = mat(0xc89b6d, { roughness: 0.7 });
-    for (const [z0, z1] of [[-6.0, -1.2], [1.1, 5.9]]) {
-      g.add(box(0.42, 0.5, z1 - z0, planter, { y: 0.25, z: (z0 + z1) / 2 }, 0.05));
-      for (let z = z0 + 0.3; z < z1; z += 0.5) {
-        const leaf = mesh(new THREE.SphereGeometry(0.22, 10, 8), mat(Math.round(z * 2) % 2 ? 0x4c9a52 : 0x6cbf62, { roughness: 0.85 }), { y: 0.62, z });
-        leaf.scale.set(0.9, 1, 1);
-        g.add(leaf);
+    const s = new THREE.Group();
+    s.add(box(3.2, 1.9, 0.08, mat(0x111827, { roughness: 0.4 }), { y: 1.65 }, 0.03));
+    s.add(mesh(new THREE.PlaneGeometry(3.05, 1.72), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }), { y: 1.65, z: 0.045, cast: false }));
+    for (const sx of [-1.2, 1.2]) s.add(box(0.06, 0.7, 0.06, mat(0x9ca3af, { metalness: 0.5 }), { x: sx, y: 0.35 }));
+    s.add(box(2.8, 0.05, 0.5, mat(0x9ca3af, { metalness: 0.5 }), { y: 0.03 }));
+    s.position.set(x, 0, z);
+    s.rotation.y = 0.7; // 카메라 쪽을 바라보게
+    g.add(s);
+  }
+
+  addLectureArea(g, p) {
+    // 강의 화면 (교육생 쪽을 바라봄)
+    const tex = canvasTexture(640, 360, (c, w, h) => {
+      c.fillStyle = "#f8fafc";
+      c.fillRect(0, 0, w, h);
+      c.fillStyle = p.color;
+      c.fillRect(0, 0, w, 64);
+      c.fillStyle = "#fff";
+      c.font = "700 30px Pretendard, sans-serif";
+      c.fillText(`${p.short} AX PBL`, 22, 43);
+      c.fillStyle = "#1f2937";
+      c.font = "600 22px Pretendard, sans-serif";
+      (p.strategies || []).forEach((t, i) => c.fillText(`${i + 1}. ${t}`.slice(0, 30), 26, 112 + i * 52));
+    });
+    const scr = new THREE.Group();
+    scr.add(box(2.6, 1.5, 0.06, mat(0x1f2937), { y: 1.6 }, 0.02));
+    scr.add(mesh(new THREE.PlaneGeometry(2.48, 1.38), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }), { y: 1.6, z: 0.035, cast: false }));
+    for (const sx of [-1.1, 1.1]) scr.add(box(0.05, 0.85, 0.05, mat(0x9ca3af, { metalness: 0.5 }), { x: sx, y: 0.42 }));
+    scr.position.set(1.4, 0, 3.7);
+    scr.rotation.y = Math.PI / 2;
+    g.add(scr);
+    // 교육생 책상 2줄 × 3
+    const top = mat(0xf6efe6, { roughness: 0.45 });
+    const leg = mat(0xb98a5e, { roughness: 0.6 });
+    const chairColor = new THREE.Color(p.color).lerp(new THREE.Color(0x1f2937), 0.3).getHex();
+    for (const x of [3.6, 5.6, 7.6]) {
+      for (const z of [2.5, 4.9]) {
+        g.add(box(0.8, 0.05, 1.5, top, { x, y: 0.72, z }, 0.02));
+        for (const dz of [-0.62, 0.62]) g.add(box(0.7, 0.7, 0.05, leg, { x, y: 0.35, z: z + dz }));
+        for (const dz of [-0.4, 0.4]) {
+          g.add(box(0.36, 0.02, 0.26, mat(0x374151), { x: x - 0.05, y: 0.76, z: z + dz }));
+          const ch = this.makeChair(chairColor, 0.78);
+          ch.position.set(x + 0.62, 0, z + dz);
+          ch.rotation.y = -Math.PI / 2;
+          g.add(ch);
+        }
       }
-    }
-    if (f === 2) {
-      // 리서치 자료실 책장 + 화이트보드
-      this.addBookshelf(g, -ROOM_W / 2 + 0.35, 1.6);
-      this.addWhiteboard(g, 6.6, ROOM_D / 2 - 0.9);
-    } else {
-      // 1F: 소파 라운지 + 게임 코너
-      this.addSofa(g, -8.25, 4.9, Math.PI / 2);
-      this.addArcade(g, 6.6, 5.2, 0x2563eb);
-      this.addArcade(g, 7.45, 5.2, 0xdb2777);
     }
   }
 
@@ -773,34 +777,34 @@ export class Office3D {
     return g;
   }
 
-  // ── 책상 ─────────────────────────────────
-  buildDesk(a) {
+  // ── 책상 (사람 한 명이 여러 층에 자리를 가질 수 있다) ──
+  buildSeat(seat, def) {
     const g = new THREE.Group();
     const top = mat(0xf6efe6, { roughness: 0.45 });
     const legMat = mat(0xb98a5e, { roughness: 0.6 });
-    const isBoss = a.def.id === "manager";
-    g.add(box(isBoss ? 2.0 : 1.7, 0.05, 0.85, isBoss ? mat(0x6b4a33, { roughness: 0.4 }) : top, { y: 0.74 }, 0.02));
+    g.add(box(1.7, 0.05, 0.85, top, { y: 0.74 }, 0.02));
     for (const sx of [-0.78, 0.78]) g.add(box(0.05, 0.72, 0.7, legMat, { x: sx, y: 0.36 }));
-    // 모니터 (사람 쪽을 바라봄 = -z)
     g.add(box(0.06, 0.25, 0.06, mat(0x374151), { y: 0.88, z: 0.12 }));
     g.add(box(0.72, 0.44, 0.04, mat(0x111827, { roughness: 0.4 }), { y: 1.13, z: 0.12 }, 0.015));
-    a.screenMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: STATE_COLOR.idle, emissiveIntensity: 0.25, roughness: 0.2 });
-    const screen = mesh(new THREE.PlaneGeometry(0.66, 0.38), a.screenMat, { y: 1.13, z: 0.095, cast: false });
+    seat.screenMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: STATE_COLOR.idle, emissiveIntensity: 0.25, roughness: 0.2 });
+    const screen = mesh(new THREE.PlaneGeometry(0.66, 0.38), seat.screenMat, { y: 1.13, z: 0.095, cast: false });
     screen.rotation.y = Math.PI;
+    screen.userData.keep = true;
     g.add(screen);
     g.add(box(0.45, 0.02, 0.14, mat(0x1f2937), { y: 0.775, z: -0.18 }, 0.008));
-    g.add(mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.1, 16), mat(new THREE.Color(a.def.color).getHex()), { x: 0.55, y: 0.82, z: -0.1 }));
-    // 책상 앞판: 팀 색 + 역할 이름 (카메라 쪽에서 잘 보인다)
-    const panelTex = textTexture(a.def.role, { w: 512, h: 128, size: 58, radius: 0, bg: a.def.color });
+    g.add(mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.1, 16), mat(new THREE.Color(seat.color).getHex()), { x: 0.55, y: 0.82, z: -0.1 }));
+    // 책상 앞판: 이름 + 이 층에서의 역할
+    const panelTex = textTexture(`${def.name} ${seat.role}`, { w: 512, h: 128, size: 54, radius: 0, bg: seat.color });
     g.add(mesh(new THREE.PlaneGeometry(1.6, 0.4), new THREE.MeshStandardMaterial({ map: panelTex, emissive: 0xffffff, emissiveMap: panelTex, emissiveIntensity: 0.2, roughness: 0.6 }), { y: 0.47, z: 0.44, cast: false }));
-    a.ledMat = new THREE.MeshBasicMaterial({ color: STATE_COLOR.idle, toneMapped: false });
-    g.add(mesh(new THREE.BoxGeometry(1.6, 0.03, 0.01), a.ledMat, { y: 0.69, z: 0.44, cast: false }));
-    const chairColor = isBoss ? 0x1f2937 : new THREE.Color(a.def.color).lerp(new THREE.Color(0x1f2937), 0.35).getHex();
-    const chair = this.makeChair(chairColor);
+    seat.ledMat = new THREE.MeshBasicMaterial({ color: STATE_COLOR.idle, toneMapped: false });
+    const led = mesh(new THREE.BoxGeometry(1.6, 0.03, 0.01), seat.ledMat, { y: 0.69, z: 0.44, cast: false });
+    led.userData.keep = true;
+    g.add(led);
+    const chair = this.makeChair(new THREE.Color(seat.color).lerp(new THREE.Color(0x1f2937), 0.35).getHex());
     chair.position.set(0, 0, -1.3);
     g.add(chair);
-    g.position.set(a.deskPos.x, 0, a.deskPos.z);
-    this.floorGroups[a.def.floor].add(g);
+    g.position.set(seat.deskPos.x, 0, seat.deskPos.z);
+    this.floorGroups[seat.floor].add(g);
   }
 
   buildCharacter(def) {
@@ -907,7 +911,7 @@ export class Office3D {
     el.innerHTML = `<div class="bubble3d"></div>
       <button type="button" class="card3d" style="--c:${a.def.color}">
         <img src="${a.def.photo}" alt="" />
-        <span class="card3d-text"><b>${a.def.name}</b><small>${a.def.title}</small></span>
+        <span class="card3d-text"><b>${a.def.name}</b><small class="sub3d">${a.def.title}</small></span>
         <i class="dot3d" data-state="idle"></i>
       </button>`;
     el.querySelector(".card3d").addEventListener("click", () => this.onSelect?.(a.def.id));
@@ -917,17 +921,23 @@ export class Office3D {
     a.label = label;
     a.bubbleEl = el.querySelector(".bubble3d");
     a.dotEl = el.querySelector(".dot3d");
+    a.subEl = el.querySelector(".sub3d");
   }
 
   // ── 공개 API ─────────────────────────────
-  addAgent(def) {
-    const deskPos = toWorld(def.desk, def.floor);
-    const home = deskPos.clone().add(V(0, -0.85));
-    const a = { def, deskPos, home, path: [], restYaw: 0, yaw: 0, walkYaw: 0, state: "idle", stateSince: 0, queue: Promise.resolve(), riding: false };
+  // seats: [{floor, desk:{x,y}(%), role, color}] — 그 층에 있는 자기 책상. homeFloor 책상에서 시작한다.
+  addPerson(def, seats, homeFloor) {
+    const seatAt = {};
+    for (const s of seats) {
+      const deskPos = toWorld(s.desk, s.floor);
+      seatAt[s.floor] = { ...s, deskPos, home: deskPos.clone().add(V(0, -0.85)) };
+      this.buildSeat(seatAt[s.floor], def);
+    }
+    const start = seatAt[homeFloor] || Object.values(seatAt)[0];
+    const a = { def, seats: seatAt, spot: { floor: start.floor, kind: "desk" }, spotKey: `${start.floor}|desk|0`, path: [], restYaw: 0, yaw: 0, walkYaw: 0, state: "idle", stateSince: 0, queue: Promise.resolve() };
     a.parts = this.buildCharacter(def);
-    a.parts.root.position.copy(home);
+    a.parts.root.position.copy(start.home);
     this.scene.add(a.parts.root);
-    this.buildDesk(a);
     this.buildLabel(a);
     this.agents.set(def.id, a);
   }
@@ -939,10 +949,19 @@ export class Office3D {
     a.stateSince = this.clock.elapsedTime;
     const color = STATE_COLOR[state] ?? STATE_COLOR.idle;
     a.parts.ringMat.color.setHex(color);
-    a.ledMat.color.setHex(color);
-    a.screenMat.emissive.setHex(color);
-    a.screenMat.emissiveIntensity = ["thinking", "searching", "working"].includes(state) ? 1.4 : 0.25;
     a.dotEl.dataset.state = state;
+    const seat = a.seats[a.spot.floor];
+    for (const s of Object.values(a.seats)) {
+      const here = s === seat && a.spot.kind === "desk";
+      s.ledMat.color.setHex(here ? color : STATE_COLOR.idle);
+      s.screenMat.emissive.setHex(here ? color : STATE_COLOR.idle);
+      s.screenMat.emissiveIntensity = here ? 1.1 : 0.2;
+    }
+  }
+
+  setLabel(id, sub) {
+    const a = this.agents.get(id);
+    if (a && a.subEl.textContent !== sub) a.subEl.textContent = sub;
   }
 
   showBubble(id, kind, text) {
@@ -956,55 +975,83 @@ export class Office3D {
     this.agents.get(id)?.bubbleEl.classList.remove("show");
   }
 
-  // from이 to의 자리로 서류를 들고 걸어갔다가(다른 층이면 엘리베이터) 돌아온다. 한 사람의 이동은 순서대로 처리한다.
-  visit(fromId, toId, carry) {
-    const a = this.agents.get(fromId);
-    const t = this.agents.get(toId);
-    if (!a || !t) return Promise.resolve();
+  floorOfPerson(id) {
+    const a = this.agents.get(id);
+    return a ? a.spot.floor : 0;
+  }
+
+  // dest: {floor, kind: "desk" | "meeting", slot} — 걸어서(다른 층이면 엘리베이터 타고) 그 자리로 간다.
+  moveTo(id, dest, { instant = false } = {}) {
+    const a = this.agents.get(id);
+    if (!a) return Promise.resolve();
+    const key = `${dest.floor}|${dest.kind}|${dest.slot || 0}`;
     const job = a.queue.then(async () => {
-      const path = this.planPath(a, t);
-      a.parts.prop.visible = true;
-      a.parts.prop.children[0].material = mat(carry === "📄" ? 0xe5e7eb : 0x8b5e34);
-      await this.walk(a, path);
-      const tp = t.parts.root.position;
-      a.restYaw = Math.atan2(tp.x - a.parts.root.position.x, tp.z - a.parts.root.position.z);
-      await this.wait(0.35);
-      a.parts.prop.visible = false;
-      a.handoff = this.clock.elapsedTime;
-      await this.wait(0.6);
-      await this.walk(a, [...path].reverse().slice(1).concat([a.home.clone()]));
-      a.restYaw = 0;
+      if (a.spotKey === key) return;
+      const target = this.spotPoint(a, dest);
+      const kind = this.kindAt(a, dest);
+      const yaw = kind === "lecture" ? Math.PI / 2 : kind === "meeting" ? Math.atan2(TABLE.x - target.x, TABLE.z - target.z) : 0;
+      if (instant) {
+        a.path = [];
+        a.parts.root.position.copy(target);
+      } else {
+        await this.walk(a, this.planPath(a, target, dest));
+      }
+      a.restYaw = yaw;
+      a.spot = { ...dest, kind };
+      a.spotKey = key;
     });
     a.queue = job.catch(() => {});
     return job;
   }
 
-  // 자기 자리 → 통로 → (다른 층이면 엘리베이터) → 통로 → 상대 자리 옆
-  planPath(a, t) {
+  // 그 층에 자리가 없으면 회의 테이블로, 강의 공간이 없는 층이면 회의 테이블로
+  kindAt(a, dest) {
+    if (dest.kind === "desk") return a.seats[dest.floor] ? "desk" : "meeting";
+    if (dest.kind === "lecture") return this.floorInfo.find((f) => f.floor === dest.floor)?.project.group ? "lecture" : "meeting";
+    return "meeting";
+  }
+
+  spotPoint(a, dest) {
+    const kind = this.kindAt(a, dest);
+    if (kind === "desk") return a.seats[dest.floor].home.clone();
+    if (kind === "lecture") return V(LECTERN.x, LECTERN.z, floorY(dest.floor));
+    const ang = ((dest.slot || 0) / 6) * Math.PI * 2 + 0.25;
+    return V(TABLE.x + Math.sin(ang) * 1.28, TABLE.z + Math.cos(ang) * 1.28, floorY(dest.floor));
+  }
+
+  // 지금 자리 → 통로 → (다른 층이면 엘리베이터) → 통로 → 목적지. 책상·회의 테이블은 돌아서 간다.
+  planPath(a, target, dest) {
+    const pos = a.parts.root.position;
+    const ya = pos.y;
+    const yt = floorY(dest.floor);
     const pts = [];
-    const ya = floorY(a.def.floor);
-    const yt = floorY(t.def.floor);
-    const isMgr = (x) => x.def.id === "manager";
+    const tableSide = (p) => {
+      const dx = p.x - TABLE.x;
+      return dx >= 0 ? 1 : -1;
+    };
+    const leaveTable = (p, y) => {
+      const s = tableSide(p);
+      const ang = Math.atan2(p.x - TABLE.x, p.z - TABLE.z);
+      pts.push(V(TABLE.x + Math.sin(ang) * 1.95, TABLE.z + Math.cos(ang) * 1.95, y), V(TABLE.x + s * 2.15, TABLE.z + Math.cos(ang) * 1.95, y), V(TABLE.x + s * 2.15, AISLE_Z, y));
+    };
+    const kind = this.kindAt(a, dest);
     // 출발
-    if (isMgr(a)) {
-      const s = Math.sign(t.home.x) || 1;
-      pts.push(V(s * 1.05, a.home.z, ya), V(s * 1.05, a.deskPos.z + 0.95, ya), V(DOOR_OUT.x, DOOR_OUT.z, ya), V(0, AISLE_Z, ya));
-    } else {
-      const s = -Math.sign(a.home.x) || 1;
-      pts.push(V(a.home.x + s * 1.05, a.home.z, ya), V(a.home.x + s * 1.05, AISLE_Z, ya));
-    }
+    if (a.spot.kind === "desk") pts.push(V(pos.x + 1.05, pos.z, ya), V(pos.x + 1.05, AISLE_Z, ya));
+    else if (a.spot.kind === "lecture") pts.push(V(pos.x, AISLE_Z, ya));
+    else leaveTable(pos, ya);
     // 층 이동
-    if (a.def.floor !== t.def.floor) {
+    if (Math.abs(ya - yt) > 0.01) {
       pts.push(V(LIFT_DOOR.x, AISLE_Z, ya), V(LIFT_DOOR.x, LIFT_DOOR.z, ya), V(LIFT.x, LIFT.z, ya), V(LIFT.x, LIFT.z, yt), V(LIFT_DOOR.x, LIFT_DOOR.z, yt), V(LIFT_DOOR.x, AISLE_Z, yt));
     }
     // 도착
-    if (isMgr(t)) {
-      const order = Math.max(0, REPORT_ORDER.indexOf(a.def.id));
-      pts.push(V(0, AISLE_Z, yt), V(DOOR_OUT.x, DOOR_OUT.z, yt), V((order - 2.5) * 0.42, t.deskPos.z + 0.95, yt));
+    if (kind === "lecture") {
+      pts.push(V(target.x, AISLE_Z, yt), target.clone());
+    } else if (kind === "desk") {
+      pts.push(V(target.x + 1.05, AISLE_Z, yt), V(target.x + 1.05, target.z, yt), target.clone());
     } else {
-      const s = -Math.sign(t.home.x) || 1;
-      const k = Math.max(0, (t.def.reports || []).indexOf(a.def.id));
-      pts.push(V(t.home.x + s * 1.05, AISLE_Z, yt), V(t.home.x + s * 1.05, t.home.z + k * 0.45, yt));
+      const s = tableSide(target);
+      const ang = Math.atan2(target.x - TABLE.x, target.z - TABLE.z);
+      pts.push(V(TABLE.x + s * 2.15, AISLE_Z, yt), V(TABLE.x + s * 2.15, TABLE.z + Math.cos(ang) * 1.95, yt), V(TABLE.x + Math.sin(ang) * 1.95, TABLE.z + Math.cos(ang) * 1.95, yt), target.clone());
     }
     return pts;
   }
@@ -1022,6 +1069,10 @@ export class Office3D {
 
   floorOf(a) {
     return THREE.MathUtils.clamp(Math.round(a.parts.root.position.y / FLOOR_H) + 1, 1, FLOORS);
+  }
+
+  get liftBusy() {
+    return [...this.agents.values()].some((a) => a.riding);
   }
 
   // ── 클릭으로 인물 선택 ─────────────────────
@@ -1162,6 +1213,12 @@ export class Office3D {
           pose.armRz = -0.2;
           pose.headY = Math.sin(t * 2.2) * 0.35;
           break;
+        case "meeting":
+          pose.armR = -0.6 + Math.sin(t * 2.4) * 0.25; // 이야기하며 손짓
+          pose.armRz = -0.2;
+          pose.headY = Math.sin(t * 0.9) * 0.25;
+          pose.headX = Math.sin(t * 1.7) * 0.06;
+          break;
         case "waiting":
           pose.armL = -0.35;
           pose.armR = -0.35;
@@ -1193,7 +1250,7 @@ export class Office3D {
     lerp(p.head.rotation, "z", pose.headZ);
     p.body.position.y = pose.bob;
 
-    const active = a.state !== "idle";
+    const active = a.state === "meeting" || a.state === "moving" || walking || a.riding;
     p.ringMat.opacity = active ? 0.45 + Math.sin(t * 5) * 0.25 : 0.18;
   }
 }

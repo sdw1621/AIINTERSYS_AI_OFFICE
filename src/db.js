@@ -1,4 +1,4 @@
-// Neon(Postgres) 보고함 저장소.
+// Neon(Postgres): 보고함 + 캘린더 일정 동기화본.
 // Vercel에서 Neon을 연결하면 DATABASE_URL(또는 POSTGRES_URL)이 자동으로 들어온다.
 // 값이 없으면 DB 기능은 꺼지고, 화면은 브라우저 저장소(보고함)만 쓴다.
 
@@ -32,41 +32,6 @@ function ensureTable() {
     throw err;
   });
   return ready;
-}
-
-// 작업 이벤트에서 보고서 한 건을 만든다. 글자 단위 이벤트(생각·작성)는 빼고 타임라인만 남긴다.
-export function reportFromJob(job) {
-  const ev = job.events;
-  const t0 = ev[0]?.t || job.createdAt;
-  const done = ev.find((e) => e.type === "job_done");
-  const lastUsage = [...ev].reverse().find((e) => e.type === "usage");
-  const timeline = ev
-    .filter((e) => ["status", "delegate", "report", "search", "read"].includes(e.type))
-    .map((e) => {
-      const x = { type: e.type, t: e.t - t0 };
-      for (const k of ["agent", "state", "from", "to", "query", "name"]) if (e[k] !== undefined) x[k] = e[k];
-      if (e.type === "report") {
-        x.chars = e.text?.length || 0;
-        x.text = (e.text || "").slice(0, 1500);
-      }
-      if (e.type === "delegate") x.instruction = (e.instruction || "").slice(0, 600);
-      return x;
-    });
-  return {
-    id: job.id,
-    task: job.task,
-    mode: job.mode,
-    model: ev.find((e) => e.type === "job_started")?.model || "",
-    status: done ? "done" : "error",
-    startedAt: new Date(t0).toISOString(),
-    endedAt: new Date(ev.at(-1)?.t || Date.now()).toISOString(),
-    cost: done?.totalCost ?? lastUsage?.totalCost ?? 0,
-    delegations: ev.filter((e) => e.type === "delegate").length,
-    searches: ev.filter((e) => e.type === "search").length,
-    materials: ev.find((e) => e.type === "job_started")?.materials || [],
-    result: done?.result || "",
-    timeline,
-  };
 }
 
 export async function saveReport(r) {
@@ -113,4 +78,36 @@ export async function getReport(id) {
 export async function deleteReport(id) {
   await ensureTable();
   await sql`DELETE FROM office_reports WHERE id = ${id}`;
+}
+
+// ── 캘린더 일정 동기화본 (iCal 주소가 없을 때 쓰는 일정) ──
+let eventsReady = null;
+function ensureEvents() {
+  eventsReady ??= sql`
+    CREATE TABLE IF NOT EXISTS office_events (
+      id          TEXT PRIMARY KEY,
+      project     TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      all_day     BOOLEAN NOT NULL DEFAULT false,
+      start_at    TEXT NOT NULL,
+      end_at      TEXT NOT NULL,
+      location    TEXT,
+      description TEXT,
+      synced_at   TIMESTAMPTZ DEFAULT now()
+    )`.catch((err) => {
+    eventsReady = null;
+    throw err;
+  });
+  return eventsReady;
+}
+
+export async function listEvents() {
+  await ensureEvents();
+  const rows = await sql`SELECT * FROM office_events ORDER BY start_at`;
+  const { normalize } = await import("./calendar.js");
+  const events = rows
+    .map((r) => normalize({ id: r.id, title: r.title, allDay: r.all_day, start: r.start_at, end: r.end_at, location: r.location || "", description: r.description || "" }))
+    .filter(Boolean);
+  const syncedAt = rows.reduce((m, r) => (!m || r.synced_at > m ? r.synced_at : m), null);
+  return { events, syncedAt: syncedAt ? new Date(syncedAt).toISOString() : null };
 }
