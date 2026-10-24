@@ -1,0 +1,31 @@
+# 층 배경 이미지(AI 생성)를 원본 주소에서 받아 웹용 크기로 줄여 public/floors/ 에 넣는다.
+name: floor-images
+on:
+  push:
+    paths: ["public/floors/sources.json"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 이미지 받기 · 변환
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y webp jq >/dev/null
+          cd public/floors
+          for k in $(jq -r 'keys[]' sources.json); do
+            url=$(jq -r --arg k "$k" '.[$k]' sources.json)
+            curl -sSfL "$url" -o "/tmp/$k.png"
+            cwebp -quiet -q 82 -resize 2048 0 "/tmp/$k.png" -o "$k.webp"
+            cwebp -quiet -q 60 -resize 640 0 "/tmp/$k.png" -o "$k-thumb.webp"
+            convert "/tmp/$k.png" -resize 900x -quality 70 "$k-preview.jpg"
+          done
+          ls -la
+      - name: 커밋
+        run: |
+          git config user.name "floor-images-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/floors
+          git diff --cached --quiet || (git commit -m "층 배경 이미지 갱신 [skip ci]" && git push)
