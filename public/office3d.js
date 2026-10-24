@@ -452,20 +452,19 @@ export class Office3D {
   makeSky() {
     const tex = canvasTexture(1024, 1024, (g, w, h) => {
       const sky = g.createLinearGradient(0, 0, 0, h);
-      sky.addColorStop(0, "#2b2154");
-      sky.addColorStop(0.2, "#5a3a86");
-      sky.addColorStop(0.38, "#b2558a");
-      sky.addColorStop(0.52, "#f0806c");
-      sky.addColorStop(0.66, "#fbb072");
-      sky.addColorStop(1, "#fcd9a2");
+      sky.addColorStop(0, "#030712");
+      sky.addColorStop(0.3, "#0a1630");
+      sky.addColorStop(0.55, "#132a52");
+      sky.addColorStop(0.75, "#1d3b6e");
+      sky.addColorStop(1, "#24508a");
       g.fillStyle = sky;
       g.fillRect(0, 0, w, h);
       // 해와 빛 번짐
       const sun = g.createRadialGradient(w * 0.82, h * 0.5, 10, w * 0.82, h * 0.5, w * 0.45);
-      sun.addColorStop(0, "rgba(255,236,190,0.95)");
-      sun.addColorStop(0.08, "rgba(255,214,150,0.75)");
-      sun.addColorStop(0.35, "rgba(255,170,110,0.25)");
-      sun.addColorStop(1, "rgba(255,150,100,0)");
+      sun.addColorStop(0, "rgba(120,220,255,0.35)");
+      sun.addColorStop(0.1, "rgba(80,170,255,0.18)");
+      sun.addColorStop(0.4, "rgba(60,120,255,0.08)");
+      sun.addColorStop(1, "rgba(40,90,200,0)");
       g.fillStyle = sun;
       g.fillRect(0, 0, w, h);
       // 별 몇 개
@@ -477,9 +476,9 @@ export class Office3D {
       }
       // 빌딩 실루엣: 먼 층 → 가까운 층
       const layers = [
-        { base: 0.5, min: 0.06, max: 0.2, color: "rgba(150,86,140,0.5)", lit: 0.1 },
-        { base: 0.6, min: 0.08, max: 0.28, color: "rgba(92,56,116,0.78)", lit: 0.2 },
-        { base: 0.72, min: 0.1, max: 0.34, color: "rgba(48,32,78,0.95)", lit: 0.32 },
+        { base: 0.5, min: 0.06, max: 0.2, color: "rgba(40,70,120,0.55)", lit: 0.1 },
+        { base: 0.6, min: 0.08, max: 0.28, color: "rgba(22,40,78,0.82)", lit: 0.2 },
+        { base: 0.72, min: 0.1, max: 0.34, color: "rgba(10,20,44,0.96)", lit: 0.32 },
       ];
       layers.forEach((L, li) => {
         let x = -20;
@@ -494,7 +493,7 @@ export class Office3D {
           for (let wy = top + 6; wy < h * L.base + 40; wy += 9) {
             for (let wx = x + 4; wx < x + bw - 4; wx += 7) {
               if (((wx * 7 + wy * 13 + i) % 100) / 100 < L.lit) {
-                g.fillStyle = (wx + wy) % 3 ? "rgba(255,214,140,0.85)" : "rgba(255,240,200,0.9)";
+                g.fillStyle = (wx + wy) % 3 ? "rgba(140,210,255,0.8)" : "rgba(235,245,255,0.9)";
                 g.fillRect(wx, wy, 3, 4);
               }
             }
@@ -505,8 +504,8 @@ export class Office3D {
       });
       // 지평선 아래 도시 불빛 안개
       const haze = g.createLinearGradient(0, h * 0.78, 0, h);
-      haze.addColorStop(0, "rgba(40,28,70,0.0)");
-      haze.addColorStop(1, "rgba(40,28,70,0.75)");
+      haze.addColorStop(0, "rgba(10,30,70,0.0)");
+      haze.addColorStop(1, "rgba(20,80,160,0.55)");
       g.fillStyle = haze;
       g.fillRect(0, h * 0.78, w, h * 0.22);
     });
@@ -515,8 +514,8 @@ export class Office3D {
 
   // ── 조명: 해 질 녘 금빛 ───────────────────
   buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xffe2cc, 0x6b4a7a, 1.15));
-    const sun = new THREE.DirectionalLight(0xffbe86, 2.6);
+    this.scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x33415e, 1.35));
+    const sun = new THREE.DirectionalLight(0xf3f8ff, 2.3);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     Object.assign(sun.shadow.camera, { near: 1, far: 80 });
@@ -524,7 +523,7 @@ export class Office3D {
     sun.shadow.normalBias = 0.03;
     this.scene.add(sun, sun.target);
     this.sun = sun;
-    const fill = new THREE.DirectionalLight(0xd9c8ff, 0.7);
+    const fill = new THREE.DirectionalLight(0x9fd8ff, 0.8);
     fill.position.set(-6, 20, 14);
     this.scene.add(fill);
   }
@@ -533,36 +532,33 @@ export class Office3D {
   buildFloorShell(f) {
     const g = this.floorGroups[f];
     const floorTex = canvasTexture(512, 512, (c, w, h) => {
-      c.fillStyle = "#d9a06a";
+      c.fillStyle = "#e9eef5";
       c.fillRect(0, 0, w, h);
-      const plankH = 64;
-      for (let row = 0; row < h / plankH; row++) {
-        let x = -((row * 173 + f * 61) % 300);
-        while (x < w) {
-          const len = 220 + ((row * 97 + x) % 160);
-          const l = 66 + ((row * 31 + x * 7) % 7) - (f === 3 ? 4 : 0);
-          c.fillStyle = `hsl(${f === 3 ? 26 : 29}, 62%, ${l}%)`;
-          c.fillRect(x + 1, row * plankH + 1, len - 2, plankH - 2);
-          x += len;
-        }
+      const t = 128;
+      for (let y = 0; y < h; y += t) for (let x = 0; x < w; x += t) {
+        const l = 92 + (((x * 7 + y * 13 + f * 5) / t) % 3) * 1.2;
+        c.fillStyle = `hsl(214, 24%, ${l}%)`;
+        c.fillRect(x + 1, y + 1, t - 2, t - 2);
       }
+      c.fillStyle = "rgba(148,163,184,0.55)";
+      for (let i = 0; i <= w; i += t) { c.fillRect(i - 1, 0, 2, h); c.fillRect(0, i - 1, w, 2); }
     }, [ROOM_W / 2.4, ROOM_D / 2.4]);
-    const floor = mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), mat(0xffffff, { map: floorTex, roughness: 0.6 }), { y: 0.002, cast: false });
+    const floor = mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), mat(0xffffff, { map: floorTex, roughness: 0.18, metalness: 0.15 }), { y: 0.002, cast: false });
     floor.rotation.x = -Math.PI / 2;
     g.add(floor);
     // 바닥판 (아래층의 천장 역할)
-    const slab = box(ROOM_W + 0.9, 0.5, ROOM_D + 0.9, mat(0xf4ece1, { roughness: 0.8 }), { y: -0.25 }, 0.12);
+    const slab = box(ROOM_W + 0.9, 0.5, ROOM_D + 0.9, mat(0x1e293b, { roughness: 0.5, metalness: 0.3 }), { y: -0.25 }, 0.12);
     slab.castShadow = f !== 1;
     g.add(slab);
     // 바닥판 앞쪽 모서리 LED 띠
-    const led = new THREE.MeshBasicMaterial({ color: 0x9fd8ff, toneMapped: false });
+    const led = new THREE.MeshBasicMaterial({ color: 0x22d3ee, toneMapped: false });
     g.add(mesh(new THREE.BoxGeometry(ROOM_W + 0.92, 0.05, 0.05), led, { y: -0.12, z: ROOM_D / 2 + 0.46, cast: false, receive: false }));
     g.add(mesh(new THREE.BoxGeometry(0.05, 0.05, ROOM_D + 0.92), led, { x: ROOM_W / 2 + 0.46, y: -0.12, cast: false, receive: false }));
 
     // 뒤쪽·왼쪽 유리 커튼월 (카메라 쪽은 열어 둔다)
     const H = FLOOR_H - 0.5;
     const glass = new THREE.MeshPhysicalMaterial({ color: 0xcfe8ff, transparent: true, opacity: 0.16, roughness: 0.05, transmission: 0.5, depthWrite: false });
-    const frame = mat(0xc9d2e0, { metalness: 0.5, roughness: 0.35 });
+    const frame = mat(0x334155, { metalness: 0.7, roughness: 0.3 });
     const backZ = -ROOM_D / 2 - 0.15;
     const leftX = -ROOM_W / 2 - 0.15;
     const back = mesh(new THREE.BoxGeometry(ROOM_W, H, 0.04), glass, { y: H / 2, z: backZ, cast: false });
@@ -577,11 +573,11 @@ export class Office3D {
     g.add(box(0.07, 0.05, ROOM_D, frame, { x: leftX, y: 1.05 }));
 
     // 모서리 기둥 + 빛 기둥
-    const pillar = mat(0xf8f4ee, { roughness: 0.6 });
+    const pillar = mat(0xf1f5f9, { roughness: 0.25, metalness: 0.2 });
     for (const [x, z] of [[-ROOM_W / 2 + 0.3, ROOM_D / 2 - 0.3], [ROOM_W / 2 - 0.3, -ROOM_D / 2 + 0.3], [ROOM_W / 2 - 0.3, ROOM_D / 2 - 0.3]]) {
       g.add(mesh(new THREE.CylinderGeometry(0.28, 0.28, FLOOR_H - 0.5, 24), pillar, { x, y: (FLOOR_H - 0.5) / 2, z }));
     }
-    const fin = new THREE.MeshBasicMaterial({ color: 0x7cc4ff, toneMapped: false });
+    const fin = new THREE.MeshBasicMaterial({ color: 0x22d3ee, toneMapped: false });
     g.add(mesh(new THREE.BoxGeometry(0.06, FLOOR_H, 0.06), fin, { x: ROOM_W / 2 + 0.48, y: FLOOR_H / 2 - 0.5, z: ROOM_D / 2 + 0.48, cast: false, receive: false }));
     g.add(mesh(new THREE.BoxGeometry(0.06, FLOOR_H, 0.06), fin, { x: -ROOM_W / 2 - 0.48, y: FLOOR_H / 2 - 0.5, z: ROOM_D / 2 + 0.48, cast: false, receive: false }));
     g.add(mesh(new THREE.BoxGeometry(0.06, FLOOR_H, 0.06), fin, { x: ROOM_W / 2 + 0.48, y: FLOOR_H / 2 - 0.5, z: -ROOM_D / 2 - 0.48, cast: false, receive: false }));
@@ -608,7 +604,7 @@ export class Office3D {
 
   addPlant(parent, x, z, s = 1, y = 0) {
     const g = new THREE.Group();
-    g.add(mesh(new THREE.CylinderGeometry(0.22 * s, 0.17 * s, 0.42 * s, 20), mat(0xf8f1e7, { roughness: 0.5 }), { y: 0.21 * s }));
+    g.add(mesh(new THREE.CylinderGeometry(0.22 * s, 0.17 * s, 0.42 * s, 20), mat(0xf1f5f9, { roughness: 0.25 }), { y: 0.21 * s }));
     const leafA = mat(0x3f8f4f, { roughness: 0.8 });
     const leafB = mat(0x5aaa5c, { roughness: 0.8 });
     const n = 9;
@@ -630,7 +626,7 @@ export class Office3D {
   // ── 프로젝트 층: 뒤쪽 구성원 책상 줄 · 간판 · 왼쪽 앞 회의 테이블 · 프로젝트별 공간 ──
   buildProjectFloor(f, g, p) {
     const color = new THREE.Color(p.color);
-    const tint = new THREE.Color(0xf6dcc0).lerp(color, 0.36).getHex();
+    const tint = new THREE.Color(0xdbe4ef).lerp(color, 0.14).getHex();
     const rug = mesh(roundedRect(15.6, 4.4, 0.8), mat(tint, { roughness: 1, side: THREE.DoubleSide }), { x: 1.4, y: 0.005, z: -3.7, cast: false });
     rug.rotation.x = -Math.PI / 2;
     g.add(rug);
@@ -641,14 +637,14 @@ export class Office3D {
     g.add(box(4.8, 0.08, 0.1, mat(0x2a2f3d), { x: 1.4, y: 2.28, z: -ROOM_D / 2 + 0.1 }));
 
     // 회의 테이블 (왼쪽 앞)
-    const tr = mesh(new THREE.CircleGeometry(1.9, 48), mat(new THREE.Color(0xf3d2b3).lerp(color, 0.15).getHex(), { roughness: 1, side: THREE.DoubleSide }), { x: TABLE.x, y: 0.006, z: TABLE.z, cast: false });
+    const tr = mesh(new THREE.CircleGeometry(1.9, 48), mat(new THREE.Color(0x475569).lerp(color, 0.18).getHex(), { roughness: 1, side: THREE.DoubleSide }), { x: TABLE.x, y: 0.006, z: TABLE.z, cast: false });
     tr.rotation.x = -Math.PI / 2;
     g.add(tr);
-    g.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.07, 48), mat(0xc58a55, { roughness: 0.45 }), { x: TABLE.x, y: 0.74, z: TABLE.z }));
-    g.add(mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 16), mat(0x5b4636), { x: TABLE.x, y: 0.36, z: TABLE.z }));
+    g.add(mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.07, 48), mat(0xf8fafc, { roughness: 0.15, metalness: 0.1 }), { x: TABLE.x, y: 0.74, z: TABLE.z }));
+    g.add(mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 16), mat(0x94a3b8, { metalness: 0.7, roughness: 0.3 }), { x: TABLE.x, y: 0.36, z: TABLE.z }));
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + 0.25;
-      const chair = this.makeChair(new THREE.Color(p.color).lerp(new THREE.Color(0xf08a4b), 0.5).getHex(), 0.8);
+      const chair = this.makeChair(new THREE.Color(p.color).lerp(new THREE.Color(0x94a3b8), 0.6).getHex(), 0.8);
       chair.position.set(TABLE.x + Math.sin(a) * 1.28, 0, TABLE.z + Math.cos(a) * 1.28);
       chair.rotation.y = a + Math.PI;
       g.add(chair);
@@ -665,7 +661,7 @@ export class Office3D {
     } else {
       // 상담 라운지
       this.addSofa(g, 6.8, 5.2, Math.PI);
-      g.add(box(1.0, 0.34, 0.7, mat(0xb98a5e), { x: 6.8, y: 0.17, z: 3.9 }, 0.06));
+      g.add(box(1.0, 0.34, 0.7, mat(0xe2e8f0, { roughness: 0.25 }), { x: 6.8, y: 0.17, z: 3.9 }, 0.06));
       this.addSofa(g, 6.8, 2.6, 0);
       this.addWhiteboard(g, 2.4, 4.6);
       this.addBookshelf(g, -ROOM_W / 2 + 0.35, 1.0);
@@ -679,8 +675,8 @@ export class Office3D {
     const poi = (x, z, yaw, lines, kind) => pois.push({ pos: V(x, z), yaw, lines, kind });
     // 탕비실 (왼쪽 뒤, 엘리베이터 옆)
     const counter = new THREE.Group();
-    counter.add(box(2.2, 0.9, 0.62, mat(0xf4ece1, { roughness: 0.6 }), { y: 0.45 }, 0.04));
-    counter.add(box(2.26, 0.05, 0.68, mat(0x6b4a36, { roughness: 0.4 }), { y: 0.92 }, 0.01));
+    counter.add(box(2.2, 0.9, 0.62, mat(0xf1f5f9, { roughness: 0.2 }), { y: 0.45 }, 0.04));
+    counter.add(box(2.26, 0.05, 0.68, mat(0x0f172a, { roughness: 0.15, metalness: 0.4 }), { y: 0.92 }, 0.01));
     counter.add(box(0.36, 0.46, 0.36, mat(0x2b2f3a, { roughness: 0.35, metalness: 0.3 }), { x: -0.55, y: 1.17 }, 0.04)); // 커피 머신
     counter.add(box(0.12, 0.05, 0.05, new THREE.MeshBasicMaterial({ color: 0x7dd3fc, toneMapped: false }), { x: -0.55, y: 1.3, z: 0.19 }));
     for (const [mx, mc] of [[0.1, 0xf08a4b], [0.32, 0xf8fafc], [0.54, 0x3f8f4f]]) counter.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 14), mat(mc), { x: mx, y: 1.01, z: 0.08 }));
@@ -714,16 +710,16 @@ export class Office3D {
     };
     const lounge = (x, z, rot) => {
       const L = new THREE.Group();
-      const rug = mesh(new THREE.CircleGeometry(1.7, 40), mat(new THREE.Color(0xf6dcc0).lerp(new THREE.Color(p.color), 0.22).getHex(), { roughness: 1, side: THREE.DoubleSide }), { y: 0.006, cast: false });
+      const rug = mesh(new THREE.CircleGeometry(1.7, 40), mat(new THREE.Color(0x64748b).lerp(new THREE.Color(p.color), 0.15).getHex(), { roughness: 1, side: THREE.DoubleSide }), { y: 0.006, cast: false });
       rug.rotation.x = -Math.PI / 2;
       L.add(rug);
-      L.add(box(1.0, 0.32, 0.6, mat(0xb98a5e, { roughness: 0.5 }), { y: 0.16, z: 0.35 }, 0.06));
+      L.add(box(1.0, 0.32, 0.6, mat(0xe2e8f0, { roughness: 0.25 }), { y: 0.16, z: 0.35 }, 0.06));
       L.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.16, 10), mat(0xf8fafc), { x: 0.25, y: 0.4, z: 0.35 }));
       L.position.set(x, 0, z);
       L.rotation.y = rot;
       g.add(L);
       this.addSofa(L, 0, -0.55, 0);
-      this.addBeanbag(L, -1.0, 1.15, 0xf08a4b);
+      this.addBeanbag(L, -1.0, 1.15, 0xe2e8f0);
       this.addBeanbag(L, 1.0, 1.15, 0x3f8f4f);
       L.updateMatrixWorld(true);
       const seat = new THREE.Vector3(0.0, 0, -0.35).applyMatrix4(L.matrixWorld);
@@ -738,7 +734,7 @@ export class Office3D {
     if (p.id === "kriso") {
       game();
       // 그래프 화면 앞 라운지
-      this.addBeanbag(g, 6.9, 1.7, 0xf08a4b);
+      this.addBeanbag(g, 6.9, 1.7, 0xe2e8f0);
       this.addBeanbag(g, 7.9, 2.5, 0x2563eb);
       this.addSofa(g, 7.7, 5.5, -2.2);
       this.addFloorLamp(g, 8.5, 4.3);
@@ -772,7 +768,7 @@ export class Office3D {
 
   // 천장이 없는 구조라 매달린 등 대신 바닥에 따뜻한 빛 웅덩이만 깐다
   addPendant(g, x, z, _y, size = 2.4, opacity = 0.3) {
-    const pool = mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ map: getGlow(), color: 0xffcf8a, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }), { x, y: 0.012, z, cast: false, receive: false });
+    const pool = mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ map: getGlow(), color: 0x67e8f9, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }), { x, y: 0.012, z, cast: false, receive: false });
     pool.rotation.x = -Math.PI / 2;
     pool.userData.keep = true;
     g.add(pool);
@@ -785,9 +781,9 @@ export class Office3D {
     const arm = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 6), dark, { x: x + 0.05, y: y + 0.21, z });
     arm.rotation.z = -0.25;
     g.add(arm);
-    const shade = mesh(new THREE.ConeGeometry(0.1, 0.12, 14, 1, true), mat(0xfff1d6, { emissive: 0xffd9a0, emissiveIntensity: 1.0, side: THREE.DoubleSide }), { x: x + 0.12, y: y + 0.42, z, cast: false });
+    const shade = mesh(new THREE.ConeGeometry(0.1, 0.12, 14, 1, true), mat(0xecfeff, { emissive: 0xa5f3fc, emissiveIntensity: 1.0, side: THREE.DoubleSide }), { x: x + 0.12, y: y + 0.42, z, cast: false });
     g.add(shade);
-    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlow(), color: 0xffd9a0, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlow(), color: 0x7dd3fc, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }));
     halo.position.set(x + 0.12, y + 0.36, z);
     halo.scale.setScalar(0.7);
     g.add(halo);
@@ -797,10 +793,10 @@ export class Office3D {
   // 가운데 협업 테이블: 높은 테이블 + 스툴 + 노트북
   addCollab(g, x, z, rot, color) {
     const c = new THREE.Group();
-    const rug = mesh(roundedRect(3.6, 2.2, 0.5), mat(new THREE.Color(0xf6dcc0).lerp(new THREE.Color(color), 0.28).getHex(), { roughness: 1, side: THREE.DoubleSide }), { y: 0.005, cast: false });
+    const rug = mesh(roundedRect(3.6, 2.2, 0.5), mat(new THREE.Color(0x475569).lerp(new THREE.Color(color), 0.18).getHex(), { roughness: 1, side: THREE.DoubleSide }), { y: 0.005, cast: false });
     rug.rotation.x = -Math.PI / 2;
     c.add(rug);
-    c.add(box(2.4, 0.06, 0.8, mat(0xf6efe6, { roughness: 0.4 }), { y: 1.0 }, 0.02));
+    c.add(box(2.4, 0.06, 0.8, mat(0xf8fafc, { roughness: 0.18, metalness: 0.08 }), { y: 1.0 }, 0.02));
     for (const lx of [-1.05, 1.05]) c.add(box(0.06, 1.0, 0.6, mat(0x2f3340), { x: lx, y: 0.5 }));
     for (const [lx, lz] of [[-0.6, 0.65], [0.6, 0.65], [-0.6, -0.65], [0.6, -0.65]]) {
       c.add(mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.06, 16), mat(color, { roughness: 0.7 }), { x: lx, y: 0.72, z: lz }));
@@ -822,12 +818,12 @@ export class Office3D {
   addFloorLamp(g, x, z) {
     g.add(mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.04, 20), mat(0x2b2b2b), { x, y: 0.02, z }));
     g.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.55, 8), mat(0x2b2b2b), { x, y: 0.8, z }));
-    g.add(mesh(new THREE.CylinderGeometry(0.18, 0.26, 0.32, 20, 1, true), mat(0xfff1d6, { emissive: 0xffd9a0, emissiveIntensity: 0.9, side: THREE.DoubleSide }), { x, y: 1.66, z, cast: false }));
-    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlow(), color: 0xffd9a0, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
+    g.add(mesh(new THREE.CylinderGeometry(0.18, 0.26, 0.32, 20, 1, true), mat(0xecfeff, { emissive: 0xa5f3fc, emissiveIntensity: 0.9, side: THREE.DoubleSide }), { x, y: 1.66, z, cast: false }));
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlow(), color: 0x7dd3fc, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
     halo.position.set(x, 1.66, z);
     halo.scale.setScalar(1.2);
     g.add(halo);
-    const pool = mesh(new THREE.PlaneGeometry(2.4, 2.4), new THREE.MeshBasicMaterial({ map: getGlow(), color: 0xffcf8a, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }), { x, y: 0.013, z, cast: false, receive: false });
+    const pool = mesh(new THREE.PlaneGeometry(2.4, 2.4), new THREE.MeshBasicMaterial({ map: getGlow(), color: 0x67e8f9, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }), { x, y: 0.013, z, cast: false, receive: false });
     pool.rotation.x = -Math.PI / 2;
     pool.userData.keep = true;
     g.add(pool);
@@ -841,9 +837,9 @@ export class Office3D {
 
   addFoosball(g, x, z) {
     const t = new THREE.Group();
-    t.add(box(1.25, 0.24, 0.72, mat(0x8b5e34, { roughness: 0.6 }), { y: 0.82 }, 0.03));
+    t.add(box(1.25, 0.24, 0.72, mat(0x1e293b, { roughness: 0.3, metalness: 0.4 }), { y: 0.82 }, 0.03));
     t.add(box(1.1, 0.02, 0.58, mat(0x3f8f4f), { y: 0.95 }));
-    for (const lx of [-0.55, 0.55]) for (const lz of [-0.3, 0.3]) t.add(box(0.07, 0.72, 0.07, mat(0x5b4636), { x: lx, y: 0.36, z: lz }));
+    for (const lx of [-0.55, 0.55]) for (const lz of [-0.3, 0.3]) t.add(box(0.07, 0.72, 0.07, mat(0x334155), { x: lx, y: 0.36, z: lz }));
     for (let i = 0; i < 4; i++) {
       t.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.0, 6), mat(0xd1d5db, { metalness: 0.7 }), { x: -0.42 + i * 0.28, y: 1.0, z: 0 }));
       t.children.at(-1).rotation.x = Math.PI / 2;
@@ -911,8 +907,8 @@ export class Office3D {
     scr.rotation.y = Math.PI / 2;
     g.add(scr);
     // 교육생 책상 2줄 × 3
-    const top = mat(0xf6efe6, { roughness: 0.45 });
-    const leg = mat(0xb98a5e, { roughness: 0.6 });
+    const top = mat(0xf8fafc, { roughness: 0.18, metalness: 0.08 });
+    const leg = mat(0x94a3b8, { metalness: 0.7, roughness: 0.3 });
     const chairColor = new THREE.Color(p.color).lerp(new THREE.Color(0x1f2937), 0.3).getHex();
     for (const x of [3.6, 5.6, 7.6]) {
       for (const z of [2.5, 4.9]) {
@@ -931,7 +927,7 @@ export class Office3D {
 
   addSofa(g, x, z, rot) {
     const s = new THREE.Group();
-    const fabric = mat(0xf3ebe0, { roughness: 0.95 });
+    const fabric = mat(0xf1f5f9, { roughness: 0.7 });
     s.add(box(2.2, 0.42, 0.9, fabric, { y: 0.26 }, 0.1));
     s.add(box(2.2, 0.6, 0.24, fabric, { y: 0.62, z: -0.34 }, 0.1));
     s.add(box(0.22, 0.58, 0.9, fabric, { x: -1.1, y: 0.42 }, 0.1));
@@ -945,10 +941,10 @@ export class Office3D {
 
   addBookshelf(g, x, z) {
     const shelf = new THREE.Group();
-    shelf.add(box(0.4, 2.2, 2.4, mat(0xb98a5e, { roughness: 0.7 }), { y: 1.1 }));
+    shelf.add(box(0.4, 2.2, 2.4, mat(0x1e293b, { roughness: 0.4, metalness: 0.4 }), { y: 1.1 }));
     const colors = [0x1e40af, 0xf59e0b, 0x10b981, 0xef4444, 0x8b5cf6, 0xf8fafc, 0x0ea5e9, 0xf08a4b];
     for (let r = 0; r < 4; r++) {
-      shelf.add(box(0.42, 0.04, 2.3, mat(0x8a6644), { x: 0.02, y: 0.3 + r * 0.52 }));
+      shelf.add(box(0.42, 0.04, 2.3, mat(0x334155, { metalness: 0.5 }), { x: 0.02, y: 0.3 + r * 0.52 }));
       let zz = -1.05;
       let i = r * 3;
       while (zz < 1.0) {
@@ -1029,20 +1025,20 @@ export class Office3D {
       c.fillStyle = "#1b2238";
       c.fillRect(0, 0, w, h);
       for (let y = 10; y < h; y += 26) for (let x = 6; x < w; x += 22) {
-        c.fillStyle = (x * 7 + y * 3) % 5 === 0 ? "rgba(255,214,140,0.9)" : "rgba(120,160,220,0.35)";
+        c.fillStyle = (x * 7 + y * 3) % 5 === 0 ? "rgba(150,225,255,0.9)" : "rgba(120,160,220,0.35)";
         c.fillRect(x, y, 14, 16);
       }
     }, [3, 2]);
     const podium = box(ROOM_W + 1.6, 9, ROOM_D + 1.6, mat(0xffffff, { map: winTex, emissive: 0xffffff, emissiveMap: winTex, emissiveIntensity: 0.35, roughness: 0.4 }), { y: -0.55 - 4.5 });
     this.exterior.add(podium);
-    this.exterior.add(box(ROOM_W + 2.2, 0.3, ROOM_D + 2.2, mat(0xf4ece1), { y: -0.62 }, 0.1));
+    this.exterior.add(box(ROOM_W + 2.2, 0.3, ROOM_D + 2.2, mat(0x1e293b), { y: -0.62 }, 0.1));
     // 입구 캐노피 + 이름
     const sign = textTexture("AIINTERSYS AI TOWER", { w: 1024, h: 160, size: 84, radius: 20, bg: "#0f172a", color: "#bfe3ff" });
     this.exterior.add(mesh(new THREE.PlaneGeometry(7, 1.1), new THREE.MeshBasicMaterial({ map: sign, toneMapped: false }), { y: -1.6, z: ROOM_D / 2 + 0.81, cast: false }));
 
     // 지붕 (3F의 천장) + 계단식 유리 왕관
     const c = this.crown;
-    c.add(box(ROOM_W + 0.9, 0.5, ROOM_D + 0.9, mat(0xf4ece1, { roughness: 0.8 }), { y: ROOF_Y - 0.25 }, 0.12));
+    c.add(box(ROOM_W + 0.9, 0.5, ROOM_D + 0.9, mat(0x1e293b, { roughness: 0.5, metalness: 0.3 }), { y: ROOF_Y - 0.25 }, 0.12));
     const band = new THREE.MeshBasicMaterial({ color: 0x9fd8ff, toneMapped: false });
     const tiers = [
       { w: ROOM_W - 1.5, d: ROOM_D - 1.5, h: 1.6 },
@@ -1104,8 +1100,8 @@ export class Office3D {
   // ── 책상 (사람 한 명이 여러 층에 자리를 가질 수 있다) ──
   buildSeat(seat, def) {
     const g = new THREE.Group();
-    const top = mat(0xf6efe6, { roughness: 0.45 });
-    const legMat = mat(0xb98a5e, { roughness: 0.6 });
+    const top = mat(0xf8fafc, { roughness: 0.18, metalness: 0.08 });
+    const legMat = mat(0x94a3b8, { metalness: 0.7, roughness: 0.3 });
     g.add(box(1.7, 0.05, 0.85, top, { y: 0.74 }, 0.02));
     for (const sx of [-0.78, 0.78]) g.add(box(0.05, 0.72, 0.7, legMat, { x: sx, y: 0.36 }));
     g.add(box(0.06, 0.25, 0.06, mat(0x374151), { y: 0.88, z: 0.12 }));
