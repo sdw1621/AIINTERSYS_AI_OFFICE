@@ -460,6 +460,14 @@ function paintFloorButtons(n) {
   for (const b of $$("#floorSwitch [data-f]")) b.classList.toggle("active", Number(b.dataset.f) === n);
 }
 
+// 자리에 앉아 있을 때 머리 위에 띄울 지금 하는 일: KRISO는 단톡방 업무 보드, 나머지는 맡은 역할
+function taskFor(id, p, m) {
+  const tasks = (S.chat.insights?.tasks || []).filter((t) => t.who === id && t.status !== "done");
+  const pick = tasks.find((t) => t.status === "doing") || tasks[0];
+  if (p?.id === "kriso" && pick) return `📌 ${pick.title}`.slice(0, 40);
+  return m?.duty ? `📌 ${m.duty}` : "";
+}
+
 // 시각 t(기본: 지금)에 맞춰 사람들을 옮긴다
 function syncOffice(instant) {
   if (!office || S.replay) return;
@@ -471,6 +479,7 @@ function syncOffice(instant) {
     const p = w.project;
     const m = roleOn(id, p);
     office.setLabel(id, `${p.short} ${m?.role || ""}`.trim());
+    office.setTask(id, taskFor(id, p, m));
     const job = office.moveTo(id, { floor: w.floor, kind: w.kind, slot: w.slot }, { instant });
     if (!instant && from !== w.floor) {
       office.setState(id, "moving");
@@ -603,6 +612,7 @@ async function loadChat() {
     S.chat.messages = c.messages;
     S.chat.insights = ins.insights;
     S.chat.error = null;
+    if (office && !S.replay) syncOffice(true); // 업무 칩 갱신
   } catch (err) {
     S.chat.error = err.message;
   }
@@ -747,6 +757,7 @@ async function startReplay(day) {
   if (!msgs.length) return;
   const kriso = S.byId.kriso;
   S.replay = { timer: null };
+  office.setAmbient(false);
   $("#replayBtn").textContent = "■ 재생 멈춤";
   $("#officeNow").hidden = true;
   office.focusFloor(kriso.floor);
@@ -787,6 +798,7 @@ function stopReplay(finished = false) {
   if (!S.replay) return;
   clearTimeout(S.replay.timer);
   S.replay = null;
+  office?.setAmbient(true);
   $("#replayBtn").textContent = "▶ 단톡방 대화 재생";
   for (const id of Object.keys(S.people)) office?.hideBubble(id);
   if (finished && isVoiceEnabled()) announce("단톡방 대화 재생을 마쳤어요.", "done");

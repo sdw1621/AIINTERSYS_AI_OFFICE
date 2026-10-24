@@ -116,6 +116,43 @@ function textTexture(text, { w = 512, h = 128, bg = "#1e40af", color = "#fff", s
   });
 }
 
+// 전등 빛 번짐 · 바닥 빛 웅덩이에 쓰는 둥근 그라데이션 (한 번만 만든다)
+let glowTex = null;
+function getGlow() {
+  if (!glowTex) {
+    glowTex = canvasTexture(128, 128, (g, w, h) => {
+      const r = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      r.addColorStop(0, "rgba(255,226,170,1)");
+      r.addColorStop(0.35, "rgba(255,196,120,0.45)");
+      r.addColorStop(1, "rgba(255,170,90,0)");
+      g.fillStyle = r;
+      g.fillRect(0, 0, w, h);
+    });
+  }
+  return glowTex;
+}
+// 모니터 화면: 코드가 흐르는 듯한 줄
+let codeTex = null;
+function getCode() {
+  if (!codeTex) {
+    codeTex = canvasTexture(256, 160, (g, w, h) => {
+      g.fillStyle = "#ffffff";
+      g.fillRect(0, 0, w, h);
+      const cols = ["#9ca3af", "#e5e7eb", "#6b7280", "#d1d5db"];
+      for (let y = 10, i = 0; y < h - 6; y += 12, i++) {
+        let x = 10 + ((i * 3) % 4) * 12;
+        while (x < w - 20) {
+          const len = 14 + ((i * 17 + x) % 46);
+          g.fillStyle = cols[(i + x) % cols.length];
+          g.fillRect(x, y, Math.min(len, w - 10 - x), 5);
+          x += len + 8;
+        }
+      }
+    });
+  }
+  return codeTex;
+}
+
 // 움직이지 않는 물체들을 재질별로 하나로 합쳐 그리기 횟수를 줄인다 (층마다 수백 개 → 수십 개)
 function bake(group) {
   group.updateMatrixWorld(true);
@@ -159,6 +196,9 @@ export class Office3D {
     this.tmp = new THREE.Vector3();
     this.active = true;
     this.focus = 0; // 0 = 타워 전체, n = 그 층
+    this.pois = {}; // 층마다 사람이 잠깐 들르는 곳 (탕비실 · 라운지 · 게임 코너 …)
+    this.ambient = true; // 일정이 없을 때 자리를 비우고 돌아다니기
+    this.glows = [];
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -236,7 +276,7 @@ export class Office3D {
     for (const t of this.floorTagObjs || []) t.visible = n === 0;
     const dir = this.view === "top" ? new THREE.Vector3(0.0001, 1, 0.0001) : new THREE.Vector3(1, 1.08, 1.12);
     const extra = Math.max(0, FLOORS - 3);
-    const fit = n === 0 ? { h: 34 + extra * 6.2, w: 30 + extra * 2 } : this.view === "top" ? { h: 15.5, w: 21 } : { h: 14.5, w: 26 };
+    const fit = n === 0 ? { h: 34 + extra * 6.2, w: 30 + extra * 2 } : this.view === "top" ? { h: 15.5, w: 21 } : { h: 12.6, w: 22.5 };
     const target = n === 0 ? V(0, 0.3, 6.4 + extra * 2.2) : V(0, 0.3, floorY(n) + 0.4);
     this.camGoal = { target, dir: dir.normalize(), fit };
     // 그림자 범위도 보는 곳에 맞춘다
@@ -280,10 +320,13 @@ export class Office3D {
   applyFrustum() {
     const { clientWidth: w, clientHeight: h } = this.container;
     const aspect = w && h ? w / h : 1.6;
-    const fitW = aspect < 1.1 && this.focus !== 0 ? this.fit.w * 0.74 : this.fit.w;
+    const portrait = aspect < 1.1 && this.focus !== 0;
+    const fitW = portrait ? this.fit.w * 0.8 : this.fit.w;
     const height = Math.max(this.fit.h, fitW / aspect);
     const width = height * aspect;
-    Object.assign(this.camera, { left: -width / 2, right: width / 2, top: height / 2, bottom: -height / 2 });
+    // 세로 화면에서는 위쪽 버튼에 가리지 않게 층을 조금 아래로 내린다
+    const up = portrait ? height * 0.03 : 0;
+    Object.assign(this.camera, { left: -width / 2, right: width / 2, top: height / 2 + up, bottom: -height / 2 + up });
     this.camera.updateProjectionMatrix();
   }
 
@@ -527,6 +570,187 @@ export class Office3D {
       this.addWhiteboard(g, 2.4, 4.6);
       this.addBookshelf(g, -ROOM_W / 2 + 0.35, 1.0);
     }
+    this.addLife(f, g, p);
+  }
+
+  // ── 생활 공간: 탕비실 · 라운지 · 게임 코너 · 펜던트 조명 · 화분 (층마다 사람이 들르는 곳도 함께 등록) ──
+  addLife(f, g, p) {
+    const pois = (this.pois[f] = []);
+    const poi = (x, z, yaw, lines, kind) => pois.push({ pos: V(x, z), yaw, lines, kind });
+    // 탕비실 (왼쪽 뒤, 엘리베이터 옆)
+    const counter = new THREE.Group();
+    counter.add(box(2.2, 0.9, 0.62, mat(0xf4ece1, { roughness: 0.6 }), { y: 0.45 }, 0.04));
+    counter.add(box(2.26, 0.05, 0.68, mat(0x6b4a36, { roughness: 0.4 }), { y: 0.92 }, 0.01));
+    counter.add(box(0.36, 0.46, 0.36, mat(0x2b2f3a, { roughness: 0.35, metalness: 0.3 }), { x: -0.55, y: 1.17 }, 0.04)); // 커피 머신
+    counter.add(box(0.12, 0.05, 0.05, new THREE.MeshBasicMaterial({ color: 0x7dd3fc, toneMapped: false }), { x: -0.55, y: 1.3, z: 0.19 }));
+    for (const [mx, mc] of [[0.1, 0xf08a4b], [0.32, 0xf8fafc], [0.54, 0x3f8f4f]]) counter.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 14), mat(mc), { x: mx, y: 1.01, z: 0.08 }));
+    counter.add(mesh(new THREE.CylinderGeometry(0.16, 0.12, 0.08, 16), mat(0xfbbf24), { x: 0.85, y: 0.99 })); // 과일 접시
+    counter.add(box(0.7, 1.75, 0.66, mat(0xe5e7eb, { metalness: 0.4, roughness: 0.3 }), { x: -1.55, y: 0.875 }, 0.05)); // 냉장고
+    counter.add(box(0.03, 0.5, 0.03, mat(0x9ca3af), { x: -1.28, y: 1.15, z: 0.34 }));
+    counter.position.set(-5.7, 0, -ROOM_D / 2 + 0.45);
+    g.add(counter);
+    for (const sx of [-6.3, -5.4]) this.addPendant(g, sx, -5.55, 2.75);
+    poi(-5.6, -5.15, Math.PI, ["☕ 커피 한 잔", "물 한 잔 마시고 올게요", "잠깐 쉬는 중", "간식 타임 🍪"], "pantry");
+    // 오른쪽 뒤 창가: 큰 화분 + 스탠드
+    this.addPlant(g, ROOM_W / 2 - 0.6, -ROOM_D / 2 + 0.6, 1.35);
+    this.addPlant(g, -ROOM_W / 2 + 0.6, -2.4, 1.1);
+    this.addFloorLamp(g, ROOM_W / 2 - 0.7, -1.2);
+    poi(7.6, -1.0, Math.PI / 2, ["노을 좋네요 🌇", "잠깐 바람 쐬는 중", "통화 중 📞"], "window");
+    // 회의 테이블 위 펜던트
+    this.addPendant(g, TABLE.x - 0.45, TABLE.z, 2.6);
+    this.addPendant(g, TABLE.x + 0.45, TABLE.z, 2.6);
+
+    const game = () => {
+      // 게임 코너 (왼쪽 앞): 오락기 2대 · 테이블 축구
+      for (const [z, c] of [[3.45, 0x2563eb], [4.3, 0xdb2777]]) {
+        const before = g.children.length;
+        this.addArcade(g, -ROOM_W / 2 + 0.6, z, c);
+        g.children[before].rotation.y = Math.PI / 2;
+      }
+      this.addFoosball(g, -6.7, 5.45);
+      this.addPendant(g, -6.7, 5.45, 2.7);
+      poi(-7.65, 3.9, -Math.PI / 2, ["한 판만… 🎮", "기분 전환 중", "최고 기록 도전!"], "game");
+      poi(-6.7, 4.75, 0, ["축구 한 판? ⚽", "잠깐 머리 식히기"], "game");
+    };
+    const lounge = (x, z, rot) => {
+      const L = new THREE.Group();
+      const rug = mesh(new THREE.CircleGeometry(1.7, 40), mat(new THREE.Color(0xf6dcc0).lerp(new THREE.Color(p.color), 0.22).getHex(), { roughness: 1, side: THREE.DoubleSide }), { y: 0.006, cast: false });
+      rug.rotation.x = -Math.PI / 2;
+      L.add(rug);
+      L.add(box(1.0, 0.32, 0.6, mat(0xb98a5e, { roughness: 0.5 }), { y: 0.16, z: 0.35 }, 0.06));
+      L.add(mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.16, 10), mat(0xf8fafc), { x: 0.25, y: 0.4, z: 0.35 }));
+      L.position.set(x, 0, z);
+      L.rotation.y = rot;
+      g.add(L);
+      this.addSofa(L, 0, -0.55, 0);
+      this.addBeanbag(L, -1.0, 1.15, 0xf08a4b);
+      this.addBeanbag(L, 1.0, 1.15, 0x3f8f4f);
+      L.updateMatrixWorld(true);
+      const seat = new THREE.Vector3(0.0, 0, -0.35).applyMatrix4(L.matrixWorld);
+      poi(seat.x, seat.z, rot, ["잠깐 머리 식히는 중", "자료 읽는 중 📖", "아이디어 정리 중 💡"], "lounge");
+    };
+
+    if (!p.group) {
+      const cx = p.id === "kriso" ? 0.9 : -0.1;
+      this.addCollab(g, cx, p.id === "kriso" ? 3.3 : 2.9, 0.35, p.color);
+      poi(cx, p.id === "kriso" ? 2.45 : 2.05, 0.35, ["같이 볼 자료 띄워 놨어요", "여기서 잠깐 정리할게요", "노트북 작업 중 💻"], "collab");
+    }
+    if (p.id === "kriso") {
+      game();
+      // 그래프 화면 앞 라운지
+      this.addBeanbag(g, 6.9, 1.7, 0xf08a4b);
+      this.addBeanbag(g, 7.9, 2.5, 0x2563eb);
+      this.addSofa(g, 7.7, 5.5, -2.2);
+      this.addFloorLamp(g, 8.5, 4.3);
+      poi(6.4, 2.3, -2.3, ["그래프 구조 확인 중", "온톨로지 관계 점검 🔍", "새 노드 들어왔네요"], "screen");
+      poi(7.2, 4.9, -2.2, ["노드 수 늘었다 📈", "관계도 다시 보는 중"], "screen");
+    } else if (p.group) {
+      lounge(-7.3, 4.6, Math.PI / 2);
+      this.addFloorLamp(g, -8.5, 6.0);
+      // 실습 자료 선반 · 3D 프린터 (뒤쪽 빈 공간)
+      const before = g.children.length;
+      this.addBookshelf(g, 6.4, -ROOM_D / 2 + 0.35);
+      g.children[before].rotation.y = -Math.PI / 2;
+      const pr = new THREE.Group();
+      pr.add(box(0.9, 0.9, 0.8, mat(0xe5e7eb, { roughness: 0.4 }), { y: 0.45 }, 0.04));
+      pr.add(box(0.7, 0.5, 0.6, mat(0x111827, { roughness: 0.2, transparent: true, opacity: 0.55 }), { y: 1.15 }, 0.02));
+      pr.add(mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.18, 6), mat(p.color), { y: 0.99 }));
+      pr.add(box(0.2, 0.04, 0.02, new THREE.MeshBasicMaterial({ color: 0x34d399, toneMapped: false }), { y: 0.7, z: 0.41 }));
+      pr.position.set(3.6, 0, -ROOM_D / 2 + 0.75);
+      g.add(pr);
+      this.addWhiteboard(g, -1.6, -ROOM_D / 2 + 0.7);
+      poi(3.6, -5.0, Math.PI, ["시제품 출력 확인 중 🖨️", "금형 샘플 살펴보는 중"], "maker");
+      poi(1.0, 2.6, Math.PI / 2, ["강의 자료 점검 중", "다음 실습 준비 📝"], "lecture");
+    } else {
+      game();
+      poi(2.4, 3.85, Math.PI - 0.5, ["할 일 정리 중 📝", "보드 업데이트"], "board");
+      poi(6.8, 3.9, -Math.PI / 2, ["상담 기록 정리 중", "잠깐 쉬는 중"], "lounge");
+    }
+    // 가장자리 화분 더
+    for (const [x, z, s] of [[ROOM_W / 2 - 0.6, 0.6, 0.9], [4.2, ROOM_D / 2 - 0.5, 1.0], [-2.6, ROOM_D / 2 - 0.5, 0.8], [-8.45, -0.9, 0.75]]) this.addPlant(g, x, z, s);
+  }
+
+  // 천장이 없는 구조라 매달린 등 대신 바닥에 따뜻한 빛 웅덩이만 깐다
+  addPendant(g, x, z, _y, size = 2.4, opacity = 0.3) {
+    const pool = mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ map: getGlow(), color: 0xffcf8a, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }), { x, y: 0.012, z, cast: false, receive: false });
+    pool.rotation.x = -Math.PI / 2;
+    pool.userData.keep = true;
+    g.add(pool);
+  }
+
+  // 책상 스탠드: 전구 빛 번짐이 은은하게 깜빡인다
+  addDeskLamp(g, x, z, y = 0.77) {
+    const dark = mat(0x2f3340, { roughness: 0.5 });
+    g.add(mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.02, 14), dark, { x, y: y + 0.01, z }));
+    const arm = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 6), dark, { x: x + 0.05, y: y + 0.21, z });
+    arm.rotation.z = -0.25;
+    g.add(arm);
+    const shade = mesh(new THREE.ConeGeometry(0.1, 0.12, 14, 1, true), mat(0xfff1d6, { emissive: 0xffd9a0, emissiveIntensity: 1.0, side: THREE.DoubleSide }), { x: x + 0.12, y: y + 0.42, z, cast: false });
+    g.add(shade);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlow(), color: 0xffd9a0, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }));
+    halo.position.set(x + 0.12, y + 0.36, z);
+    halo.scale.setScalar(0.7);
+    g.add(halo);
+    this.glows.push({ halo, seed: x * 3.1 + z * 1.7 });
+  }
+
+  // 가운데 협업 테이블: 높은 테이블 + 스툴 + 노트북
+  addCollab(g, x, z, rot, color) {
+    const c = new THREE.Group();
+    const rug = mesh(roundedRect(3.6, 2.2, 0.5), mat(new THREE.Color(0xf6dcc0).lerp(new THREE.Color(color), 0.28).getHex(), { roughness: 1, side: THREE.DoubleSide }), { y: 0.005, cast: false });
+    rug.rotation.x = -Math.PI / 2;
+    c.add(rug);
+    c.add(box(2.4, 0.06, 0.8, mat(0xf6efe6, { roughness: 0.4 }), { y: 1.0 }, 0.02));
+    for (const lx of [-1.05, 1.05]) c.add(box(0.06, 1.0, 0.6, mat(0x2f3340), { x: lx, y: 0.5 }));
+    for (const [lx, lz] of [[-0.6, 0.65], [0.6, 0.65], [-0.6, -0.65], [0.6, -0.65]]) {
+      c.add(mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.06, 16), mat(color, { roughness: 0.7 }), { x: lx, y: 0.72, z: lz }));
+      c.add(mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.7, 8), mat(0x2f3340), { x: lx, y: 0.36, z: lz }));
+    }
+    for (const lx of [-0.55, 0.55]) {
+      c.add(box(0.34, 0.015, 0.24, mat(0x9ca3af, { metalness: 0.5 }), { x: lx, y: 1.04, z: 0.12 }));
+      const lid = box(0.34, 0.22, 0.012, mat(0x374151, { metalness: 0.4 }), { x: lx, y: 1.15, z: 0.0 });
+      lid.rotation.x = -0.25;
+      c.add(lid);
+    }
+    c.add(mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 14), mat(0xf08a4b), { x: 0.05, y: 1.09, z: -0.15 }));
+    c.position.set(x, 0, z);
+    c.rotation.y = rot;
+    g.add(c);
+    this.addPendant(g, x, z, 0, 3.2, 0.26);
+  }
+
+  addFloorLamp(g, x, z) {
+    g.add(mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.04, 20), mat(0x2b2b2b), { x, y: 0.02, z }));
+    g.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.55, 8), mat(0x2b2b2b), { x, y: 0.8, z }));
+    g.add(mesh(new THREE.CylinderGeometry(0.18, 0.26, 0.32, 20, 1, true), mat(0xfff1d6, { emissive: 0xffd9a0, emissiveIntensity: 0.9, side: THREE.DoubleSide }), { x, y: 1.66, z, cast: false }));
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlow(), color: 0xffd9a0, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
+    halo.position.set(x, 1.66, z);
+    halo.scale.setScalar(1.2);
+    g.add(halo);
+    const pool = mesh(new THREE.PlaneGeometry(2.4, 2.4), new THREE.MeshBasicMaterial({ map: getGlow(), color: 0xffcf8a, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }), { x, y: 0.013, z, cast: false, receive: false });
+    pool.rotation.x = -Math.PI / 2;
+    pool.userData.keep = true;
+    g.add(pool);
+  }
+
+  addBeanbag(g, x, z, color) {
+    const b = mesh(new THREE.SphereGeometry(0.42, 20, 14), mat(color, { roughness: 0.95 }), { x, y: 0.26, z });
+    b.scale.set(1, 0.62, 1);
+    g.add(b);
+  }
+
+  addFoosball(g, x, z) {
+    const t = new THREE.Group();
+    t.add(box(1.25, 0.24, 0.72, mat(0x8b5e34, { roughness: 0.6 }), { y: 0.82 }, 0.03));
+    t.add(box(1.1, 0.02, 0.58, mat(0x3f8f4f), { y: 0.95 }));
+    for (const lx of [-0.55, 0.55]) for (const lz of [-0.3, 0.3]) t.add(box(0.07, 0.72, 0.07, mat(0x5b4636), { x: lx, y: 0.36, z: lz }));
+    for (let i = 0; i < 4; i++) {
+      t.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.0, 6), mat(0xd1d5db, { metalness: 0.7 }), { x: -0.42 + i * 0.28, y: 1.0, z: 0 }));
+      t.children.at(-1).rotation.x = Math.PI / 2;
+      for (const pz of [-0.18, 0, 0.18]) t.add(box(0.04, 0.1, 0.04, mat(i % 2 ? 0xef4444 : 0x2563eb), { x: -0.42 + i * 0.28, y: 0.97, z: pz }));
+    }
+    t.position.set(x, 0, z);
+    g.add(t);
   }
 
   addGraphScreen(g, x, z, color) {
@@ -786,7 +1010,7 @@ export class Office3D {
     for (const sx of [-0.78, 0.78]) g.add(box(0.05, 0.72, 0.7, legMat, { x: sx, y: 0.36 }));
     g.add(box(0.06, 0.25, 0.06, mat(0x374151), { y: 0.88, z: 0.12 }));
     g.add(box(0.72, 0.44, 0.04, mat(0x111827, { roughness: 0.4 }), { y: 1.13, z: 0.12 }, 0.015));
-    seat.screenMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: STATE_COLOR.idle, emissiveIntensity: 0.25, roughness: 0.2 });
+    seat.screenMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: STATE_COLOR.idle, emissiveMap: getCode(), emissiveIntensity: 0.25, roughness: 0.2 });
     const screen = mesh(new THREE.PlaneGeometry(0.66, 0.38), seat.screenMat, { y: 1.13, z: 0.095, cast: false });
     screen.rotation.y = Math.PI;
     screen.userData.keep = true;
@@ -803,8 +1027,11 @@ export class Office3D {
     const chair = this.makeChair(new THREE.Color(seat.color).lerp(new THREE.Color(0x1f2937), 0.35).getHex());
     chair.position.set(0, 0, -1.3);
     g.add(chair);
+    this.addPlant(g, -0.68, 0.18, 0.28, 0.77); // 책상 위 작은 화분
+    this.addDeskLamp(g, 0.6, 0.22);
     g.position.set(seat.deskPos.x, 0, seat.deskPos.z);
     this.floorGroups[seat.floor].add(g);
+    this.addPendant(this.floorGroups[seat.floor], seat.deskPos.x, seat.deskPos.z - 0.4, 0, 2.6, 0.24);
   }
 
   buildCharacter(def) {
@@ -847,7 +1074,8 @@ export class Office3D {
     for (const arm of [armL, armR]) arm.add(mesh(new THREE.SphereGeometry(0.065, 10, 8), skin, { y: -0.66 }));
 
     const head = new THREE.Group();
-    head.position.y = 1.64;
+    head.position.y = 1.68;
+    head.scale.setScalar(1.3); // 머리를 키워 멀리서도 표정·머리 모양이 보이게
     body.add(head);
     head.add(mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.1, 12), skin, { y: -0.14 }));
     const skull = mesh(new THREE.SphereGeometry(0.17, 24, 18), skin, { y: 0.02 });
@@ -900,6 +1128,7 @@ export class Office3D {
     ring.rotation.x = -Math.PI / 2;
     root.add(ring);
 
+    body.scale.setScalar(1.12);
     root.traverse((o) => (o.userData.agentId = def.id));
     return { root, body, legL, legR, armL, armR, head, prop, ringMat };
   }
@@ -916,7 +1145,7 @@ export class Office3D {
       </button>`;
     el.querySelector(".card3d").addEventListener("click", () => this.onSelect?.(a.def.id));
     const label = new CSS2DObject(el);
-    label.position.set(0, 2.2, 0);
+    label.position.set(0, 2.42, 0);
     a.parts.root.add(label);
     a.label = label;
     a.bubbleEl = el.querySelector(".bubble3d");
@@ -934,7 +1163,9 @@ export class Office3D {
       this.buildSeat(seatAt[s.floor], def);
     }
     const start = seatAt[homeFloor] || Object.values(seatAt)[0];
-    const a = { def, seats: seatAt, spot: { floor: start.floor, kind: "desk" }, spotKey: `${start.floor}|desk|0`, path: [], restYaw: 0, yaw: 0, walkYaw: 0, state: "idle", stateSince: 0, queue: Promise.resolve() };
+    const seed = this.agents.size * 7.3 + 1.1;
+    const a = { def, seats: seatAt, spot: { floor: start.floor, kind: "desk" }, spotKey: `${start.floor}|desk|0`, path: [], restYaw: 0, yaw: 0, walkYaw: 0, state: "idle", stateSince: 0, queue: Promise.resolve(),
+      seed, pending: 0, lastT: 0, nextErrand: 8 + seed * 2.3, errand: false, appBubble: false, sayText: "", sayUntil: 0, taskText: "", shown: "" };
     a.parts = this.buildCharacter(def);
     a.parts.root.position.copy(start.home);
     this.scene.add(a.parts.root);
@@ -967,12 +1198,114 @@ export class Office3D {
   showBubble(id, kind, text) {
     const a = this.agents.get(id);
     if (!a) return;
+    a.appBubble = true;
+    a.shown = `${kind}|${text}`;
     a.bubbleEl.className = `bubble3d show ${kind}`;
     a.bubbleEl.textContent = text;
   }
 
   hideBubble(id) {
-    this.agents.get(id)?.bubbleEl.classList.remove("show");
+    const a = this.agents.get(id);
+    if (!a) return;
+    a.appBubble = false;
+    a.shown = "";
+    a.bubbleEl.classList.remove("show");
+  }
+
+  // 자리에 앉아 있을 때 머리 위에 띄우는 지금 하는 일 (단톡방 업무 보드에서)
+  setTask(id, text) {
+    const a = this.agents.get(id);
+    if (a) a.taskText = text || "";
+  }
+
+  // 일정이 없을 때 자리를 비우고 돌아다니기 (단톡방 재생 중에는 끈다)
+  setAmbient(on) {
+    this.ambient = on;
+  }
+
+  // 말풍선: 앱이 띄운 것 > 잠깐 하는 말 > 앉아 있을 때 지금 하는 일
+  updateBubble(a, seated) {
+    if (a.appBubble) return;
+    let want = "";
+    if (a.sayUntil > a.lastT && a.sayText) want = `say|${a.sayText}`;
+    else if (seated && a.taskText) want = `task|${a.taskText}`;
+    if (want === a.shown) return;
+    a.shown = want;
+    if (!want) return a.bubbleEl.classList.remove("show");
+    const [kind, ...rest] = want.split("|");
+    a.bubbleEl.className = `bubble3d show ${kind}`;
+    a.bubbleEl.textContent = rest.join("|");
+  }
+
+  say(a, text, seconds = 5) {
+    a.sayText = text;
+    a.sayUntil = a.lastT + seconds;
+  }
+
+  // 시뮬레이션 시간으로 기다린다 (탭이 가려져도 순서가 꼬이지 않게)
+  waitSim(a, seconds) {
+    return new Promise((res) => {
+      a.waitUntil = a.lastT + seconds;
+      a.onWait = res;
+    });
+  }
+
+  // 자리 → 들를 곳 경로: 뒤쪽이면 의자 뒤 통로, 앞쪽이면 가운데 통로로 돈다
+  errandPath(a, to, back = false) {
+    const f = a.spot.floor;
+    const y = floorY(f);
+    const h = a.seats[f].home;
+    const out = [V(h.x + 1.05, h.z, y)];
+    if (to.z < -3) out.push(V(h.x + 1.05, -5.25, y), V(to.x, -5.25, y));
+    else out.push(V(h.x + 1.05, AISLE_Z, y), V(to.x, AISLE_Z, y));
+    out.push(V(to.x, to.z, y));
+    if (back) out.reverse().push(h.clone());
+    return out;
+  }
+
+  // 일정이 없는 사람이 가끔 자리를 비운다: 탕비실·창가·라운지·게임 코너, 또는 옆자리 동료에게 말 걸기
+  startErrand(a) {
+    const f = a.spot.floor;
+    const mates = [...this.agents.values()].filter((b) => b !== a && b.spot.floor === f && b.spot.kind === "desk" && !b.errand && !b.path.length && b.seats[f] && this.floorOf(b) === f);
+    const places = this.pois[f] || [];
+    if (!places.length && !mates.length) return;
+    a.errand = true;
+    a.pending++;
+    const roll = (a.seed * 13.7 + a.lastT * 0.37) % 1;
+    const job = a.queue.then(async () => {
+      if (a.spot.kind !== "desk" || a.state !== "present") return;
+      if (mates.length && roll < 0.35) {
+        const b = mates[Math.floor(roll * 100) % mates.length];
+        const bh = b.seats[f].home;
+        const stand = V(bh.x + 1.0, bh.z, 0);
+        await this.walk(a, this.errandPath(a, stand));
+        a.restYaw = -Math.PI / 2;
+        const asks = ["보고서 이 부분 같이 볼까요?", "표 번호 맞춰 볼게요", "이거 확인 좀 부탁드려요", "오늘 일정 괜찮으세요?"];
+        const replies = ["네, 볼게요!", "좋아요 👍", "잠깐만요~", "그렇게 하죠!"];
+        this.say(a, `${b.def.name}님, ${asks[Math.floor(roll * 40) % asks.length]}`, 4.5);
+        b.lookAt = { x: stand.x, z: stand.z, until: a.lastT + 7 };
+        await this.waitSim(a, 2.6);
+        this.say(b, replies[Math.floor(roll * 70) % replies.length], 3.5);
+        await this.waitSim(a, 3.6);
+        await this.walk(a, this.errandPath(a, stand, true));
+      } else if (places.length) {
+        const pl = places[Math.floor(roll * 997) % places.length];
+        await this.walk(a, this.errandPath(a, pl.pos));
+        a.restYaw = pl.yaw;
+        a.posing = pl.kind;
+        this.say(a, pl.lines[Math.floor(roll * 53) % pl.lines.length], 5);
+        await this.waitSim(a, 5 + (roll * 4));
+        a.posing = null;
+        await this.walk(a, this.errandPath(a, pl.pos, true));
+      }
+      a.restYaw = 0;
+    });
+    a.queue = job.catch(() => {}).finally(() => {
+      a.errand = false;
+      a.posing = null;
+      a.pending--;
+      a.nextErrand = a.lastT + 22 + ((a.seed * 31 + a.lastT) % 30);
+    });
   }
 
   floorOfPerson(id) {
@@ -985,6 +1318,7 @@ export class Office3D {
     const a = this.agents.get(id);
     if (!a) return Promise.resolve();
     const key = `${dest.floor}|${dest.kind}|${dest.slot || 0}`;
+    a.pending++;
     const job = a.queue.then(async () => {
       if (a.spotKey === key) return;
       const target = this.spotPoint(a, dest);
@@ -1000,7 +1334,7 @@ export class Office3D {
       a.spot = { ...dest, kind };
       a.spotKey = key;
     });
-    a.queue = job.catch(() => {});
+    a.queue = job.catch(() => {}).finally(() => a.pending--);
     return job;
   }
 
@@ -1121,6 +1455,7 @@ export class Office3D {
       }
     }
     if (this.beacon) this.beacon.material.color.setHex(Math.sin(t * 3) > 0 ? 0xff4d4d : 0x661a1a);
+    for (const gl of this.glows) gl.halo.material.opacity = 0.68 + Math.sin(t * 1.3 + gl.seed) * 0.07;
     if (!this.active) return;
     this.moveCamera(dt);
     this.controls.update();
@@ -1132,6 +1467,13 @@ export class Office3D {
     const p = a.parts;
     const pos = p.root.position;
     let walking = false;
+    a.lastT = t;
+    if (a.onWait && t >= a.waitUntil) {
+      const r = a.onWait;
+      a.onWait = null;
+      r();
+    }
+    if (this.ambient && !a.errand && !a.pending && !a.path.length && a.state === "present" && a.spot.kind === "desk" && t > a.nextErrand) this.startErrand(a);
 
     a.riding = false;
     if (a.path.length && Math.abs(a.path[0].y - pos.y) > 0.01) {
@@ -1178,9 +1520,60 @@ export class Office3D {
     p.root.rotation.y = a.yaw;
 
     // 자세: 목표 각도로 부드럽게 보간
-    const pose = { legL: 0, legR: 0, armL: 0, armR: 0, armLz: -0.08, armRz: 0.08, headX: 0, headY: 0, headZ: 0, bob: 0 };
+    const pose = { legL: 0, legR: 0, armL: 0, armR: 0, armLz: -0.08, armRz: 0.08, headX: 0, headY: 0, headZ: 0, bob: 0, bodyZ: 0 };
     const since = t - a.stateSince;
-    if (walking) {
+    // 자리(책상·회의 의자)에 도착해 있으면 앉는다
+    const atDesk = a.spot.kind === "desk" && !a.errand && ["present", "idle", "working"].includes(a.state);
+    const atTable = a.spot.kind === "meeting" && a.state !== "moving";
+    const seated = !walking && !a.riding && !a.path.length && (atDesk || atTable);
+    if (seated) {
+      pose.legL = pose.legR = -1.45;
+      pose.bob = -0.4;
+      pose.bodyZ = atDesk ? -0.27 : 0.05;
+      const cyc = (t * 0.045 + a.seed * 0.13) % 1; // 사람마다 다른 리듬
+      if (atTable || a.state === "meeting") {
+        pose.armR = -0.7 + Math.sin(t * 2.4 + a.seed) * 0.25;
+        pose.armRz = -0.2;
+        pose.armL = -0.5;
+        pose.headY = Math.sin(t * 0.9 + a.seed) * 0.3;
+      } else if (cyc < 0.08) {
+        pose.armL = pose.armR = -2.9; // 기지개
+        pose.headX = -0.25;
+      } else if (cyc < 0.2) {
+        pose.armR = -2.1;
+        pose.armRz = -0.55; // 턱 괴고 생각
+        pose.armL = -1.0;
+        pose.armLz = 0.3;
+        pose.headZ = Math.sin(t * 1.4) * 0.1;
+      } else {
+        pose.armL = -1.15 + Math.sin(t * 17 + a.seed) * 0.08; // 타이핑
+        pose.armR = -1.15 + Math.sin(t * 17 + a.seed + 1.7) * 0.08;
+        pose.armLz = 0.28;
+        pose.armRz = -0.28;
+        pose.headX = 0.12 + Math.sin(t * 3.1) * 0.02;
+        pose.headY = cyc > 0.9 ? Math.sin(t * 1.2) * 0.45 : 0; // 가끔 주변을 둘러본다
+      }
+      if (a.lookAt && a.lookAt.until > t) {
+        pose.headY = THREE.MathUtils.clamp(Math.atan2(a.lookAt.x - pos.x, a.lookAt.z - pos.z) - a.yaw, -1.1, 1.1);
+        pose.armL = pose.armR = -0.6;
+      }
+    } else if (!walking && a.posing === "game") {
+      pose.armL = pose.armR = -1.2 + Math.sin(t * 14) * 0.12;
+      pose.armLz = 0.25;
+      pose.armRz = -0.25;
+      pose.bob = Math.abs(Math.sin(t * 6)) * 0.02;
+    } else if (!walking && a.posing === "pantry") {
+      pose.armR = -1.6 + Math.sin(t * 0.8) * 0.4; // 컵을 든다
+      pose.armRz = -0.3;
+      pose.headX = Math.sin(t * 0.8) > 0.6 ? -0.2 : 0;
+    } else if (!walking && a.posing) {
+      pose.armL = -0.3;
+      pose.armR = -0.3;
+      pose.armLz = 0.45;
+      pose.armRz = -0.45; // 뒷짐 비슷하게
+      pose.headY = Math.sin(t * 0.7 + a.seed) * 0.3;
+      pose.bob = Math.sin(t * 2) * 0.006;
+    } else if (walking) {
       const s = Math.sin(t * 9);
       pose.legL = s * 0.55;
       pose.legR = -s * 0.55;
@@ -1248,7 +1641,9 @@ export class Office3D {
     lerp(p.head.rotation, "x", pose.headX);
     lerp(p.head.rotation, "y", pose.headY);
     lerp(p.head.rotation, "z", pose.headZ);
-    p.body.position.y = pose.bob;
+    p.body.position.y += (pose.bob - p.body.position.y) * (seated || walking ? k : 1);
+    p.body.position.z += (pose.bodyZ - p.body.position.z) * k;
+    this.updateBubble(a, seated && atDesk);
 
     const active = a.state === "meeting" || a.state === "moving" || walking || a.riding;
     p.ringMat.opacity = active ? 0.45 + Math.sin(t * 5) * 0.25 : 0.18;
