@@ -2,10 +2,10 @@
 // 일정은 구글 캘린더에서 오고, 일정 제목·설명에 아래 match 단어가 있으면 그 프로젝트 일정으로 본다.
 
 export const PEOPLE = {
-  shin: { id: "shin", name: "신동욱", title: "대표 · 교수", color: "#1E40AF", chatNames: ["AI인터시스_신동욱", "신동욱"], look: { hair: "short", hairColor: "#1a1a1a", outfit: "#1f2a44", shirt: "#ffffff", pants: "#1c2233", glasses: true } },
-  yang: { id: "yang", name: "양선희", title: "PM", color: "#0E7490", chatNames: ["모블양선희대표님", "양선희"], look: { hair: "long", hairColor: "#2a1d18", outfit: "#e8dccb", shirt: "#ffffff", pants: "#3b3b46" } },
-  leebu: { id: "leebu", name: "이부일", title: "미팅일정", color: "#0E7490", chatNames: ["이부일 대표님", "이부일"], look: { hair: "short", hairColor: "#22201e", outfit: "#5b7aa8", shirt: "#ffffff", pants: "#2b2f3a" } },
-  leejh: { id: "leejh", name: "이재현", title: "문서정리", color: "#0E7490", chatNames: ["이재현"], look: { hair: "short", hairColor: "#2c2420", outfit: "#7a8f6b", shirt: "#ffffff", pants: "#30343c" } },
+  shin: { id: "shin", name: "신동욱", title: "대표 · 교수", color: "#1E40AF", chatNames: ["AI인터시스_신동욱", "신동욱"], look: { hair: "short", hairColor: "#1a1a1a", outfit: "#1f2a44", shirt: "#ffffff", pants: "#1c2233", glasses: true }, voice: { gender: "m", pitch: 0.95, rate: 1.02 } },
+  yang: { id: "yang", name: "양선희", title: "PM", color: "#0E7490", chatNames: ["모블양선희대표님", "양선희"], look: { hair: "long", hairColor: "#2a1d18", outfit: "#e8dccb", shirt: "#ffffff", pants: "#3b3b46" }, voice: { gender: "f", pitch: 1.1, rate: 1.0 } },
+  leebu: { id: "leebu", name: "이부일", title: "미팅일정", color: "#0E7490", chatNames: ["이부일 대표님", "이부일"], look: { hair: "short", hairColor: "#22201e", outfit: "#5b7aa8", shirt: "#ffffff", pants: "#2b2f3a" }, voice: { gender: "m", pitch: 0.78, rate: 0.95 } },
+  leejh: { id: "leejh", name: "이재현", title: "문서정리", color: "#0E7490", chatNames: ["이재현"], look: { hair: "short", hairColor: "#2c2420", outfit: "#7a8f6b", shirt: "#ffffff", pants: "#30343c" }, voice: { gender: "m", pitch: 1.12, rate: 1.1 } },
 };
 
 const ULSAN_PBL = "울산 PBL · 클로드 코드 업무 자동화 구현 및 챗봇 (3주, 1일 4시간)";

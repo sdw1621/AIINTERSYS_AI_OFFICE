@@ -6,6 +6,7 @@ import { PEOPLE, publicProjects } from "./src/projects.js";
 import { getEvents, calendarConfigured } from "./src/calendar.js";
 import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights } from "./src/db.js";
 import { parseKakao } from "./src/chat.js";
+import { meetingScript, answer, llmEnabled } from "./src/meeting.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -26,6 +27,17 @@ function passcodeOk(given) {
   const b = Buffer.from(PASSCODE);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+// 단톡방 자동 수집(PC 스크립트·예약 작업)은 접속 코드 대신 IMPORT_KEY로도 올릴 수 있다
+const IMPORT_KEY = process.env.IMPORT_KEY || "";
+function requireCodeOrImportKey(req, res, next) {
+  const k = Buffer.from(String(req.get("x-import-key") || ""));
+  const want = Buffer.from(IMPORT_KEY);
+  if (IMPORT_KEY && k.length === want.length && timingSafeEqual(k, want)) {
+    res.set("Cache-Control", "no-store");
+    return next();
+  }
+  return requireCode(req, res, next);
+}
 function requireCode(req, res, next) {
   if (LOCKED_OUT) return res.status(503).json({ error: "서버에 OFFICE_PASSCODE가 설정되어 있지 않아 열 수 없어요." });
   if (!passcodeOk(req.get("x-office-passcode"))) return res.status(401).json({ error: "접속 코드가 맞지 않아요.", code: "bad_passcode" });
@@ -35,7 +47,7 @@ function requireCode(req, res, next) {
 
 // 공개 정보: 잠금 여부만
 app.get("/api/config", (_req, res) => {
-  res.json({ needsPasscode: Boolean(PASSCODE) || ON_VERCEL, calendar: calendarConfigured(), reports: dbEnabled });
+  res.json({ needsPasscode: Boolean(PASSCODE) || ON_VERCEL, calendar: calendarConfigured(), reports: dbEnabled, llm: llmEnabled });
 });
 
 // 사무실 전체: 프로젝트 · 사람 · 일정
@@ -106,7 +118,7 @@ app.get("/api/chat/days", requireCode, requireDb, async (req, res) => {
   }
 });
 // 카카오톡 '대화 내보내기' 파일 내용을 그대로 받아 새 메시지만 쌓는다
-app.post("/api/chat/import", requireCode, requireDb, async (req, res) => {
+app.post("/api/chat/import", requireCodeOrImportKey, requireDb, async (req, res) => {
   const room = roomOf(req);
   const text = typeof req.body?.text === "string" ? req.body.text : "";
   if (!room || !text) return res.status(400).json({ error: "대화 파일 내용이 비어 있어요." });
@@ -122,6 +134,33 @@ app.post("/api/chat/import", requireCode, requireDb, async (req, res) => {
 app.get("/api/insights", requireCode, requireDb, async (req, res) => {
   try {
     res.json({ insights: await getInsights(roomOf(req) || "kriso") });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+
+// ── AI 음성 회의: 하루치 대화 → 회의 대본, 회의 중 끼어들기 질문 → 담당자 답변 ──
+const dayOf = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : null);
+app.get("/api/meeting", requireCode, requireDb, async (req, res) => {
+  const day = dayOf(req.query.day);
+  if (!day) return res.status(400).json({ error: "날짜(day=YYYY-MM-DD)가 필요해요." });
+  try {
+    const [messages, insights] = await Promise.all([listChat("kriso", { day }), getInsights("kriso")]);
+    if (!messages.length) return res.status(404).json({ error: "그날 대화가 없어요." });
+    res.json({ day, count: messages.length, ...(await meetingScript(day, messages, insights)) });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.post("/api/meeting/ask", requireCode, requireDb, async (req, res) => {
+  const q = String(req.body?.question || "").trim().slice(0, 300);
+  if (!q) return res.status(400).json({ error: "질문이 비어 있어요." });
+  try {
+    const day = dayOf(req.body?.day);
+    const [recent, dayMsgs, insights] = await Promise.all([listChat("kriso", { limit: 200 }), day ? listChat("kriso", { day }) : [], getInsights("kriso")]);
+    const seen = new Set();
+    const messages = [...recent, ...dayMsgs].filter((m) => !seen.has(m.t + m.text) && seen.add(m.t + m.text)).sort((a, b) => a.t.localeCompare(b.t));
+    res.json(await answer(q, messages, insights));
   } catch (err) {
     dbError(res, err);
   }

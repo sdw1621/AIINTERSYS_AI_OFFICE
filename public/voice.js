@@ -145,3 +145,41 @@ export function summarize(md, max = 90) {
   out = speakable(out);
   return out.length > max ? out.slice(0, max) + "…" : out;
 }
+
+// ── AI 음성 회의: 사람마다 다른 목소리(성별 음성 + 높낮이·빠르기)로 한 줄씩 읽는다 ──
+function voiceFor(gender, index = 0) {
+  const ko = (window.speechSynthesis?.getVoices() || []).filter((v) => /^ko/i.test(v.lang));
+  const name = (v) => v.name.toLowerCase();
+  const female = ko.filter((v) => FEMALE_HINTS.some((h) => name(v).includes(h)));
+  const male = ko.filter((v) => MALE_HINTS.some((h) => name(v).includes(h)));
+  const pool = gender === "f" ? (female.length ? female : ko) : male.length ? male : ko.filter((v) => !female.includes(v)).length ? ko.filter((v) => !female.includes(v)) : ko;
+  return pool.length ? pool[index % pool.length] : null;
+}
+
+// 다 읽으면 끝나는 Promise. 음성이 없거나 막히면 글자 수만큼 기다렸다 끝낸다.
+export function speakAs(person, text, { index = 0 } = {}) {
+  const fallback = Math.min(9000, 1200 + text.length * 85);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    if (!voiceSupported()) return setTimeout(finish, fallback);
+    const u = new SpeechSynthesisUtterance(text.replace(/[📌☕🎮📖💡📝🖨️👍📈🔍]/gu, ""));
+    const v = person?.voice || {};
+    u.lang = "ko-KR";
+    u.voice = voiceFor(v.gender, index);
+    u.pitch = v.pitch ?? 1;
+    u.rate = v.rate ?? 1;
+    u.onend = finish;
+    u.onerror = finish;
+    window.speechSynthesis.speak(u);
+    setTimeout(finish, fallback + 4000); // onend가 오지 않는 브라우저 대비
+  });
+}
+
+export function stopSpeaking() {
+  window.speechSynthesis?.cancel();
+}

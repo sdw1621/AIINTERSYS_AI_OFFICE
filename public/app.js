@@ -1,7 +1,7 @@
 // AIINTERSYS AI TOWER: 실제 프로젝트·사람·구글 캘린더 일정을 모니터링 화면과 3D 타워로 보여 준다.
 // 화면: #/monitor(첫 화면) · #/office(타워) · #/reports(보고함)
 
-import { announce, unlock, isVoiceEnabled, setVoiceEnabled } from "./voice.js";
+import { announce, unlock, isVoiceEnabled, setVoiceEnabled, speakAs, stopSpeaking } from "./voice.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -743,6 +743,127 @@ async function setupReplay() {
   if (busy) $("#replayDay").value = busy.day;
 }
 $("#replayBtn").addEventListener("click", () => (S.replay ? stopReplay() : startReplay($("#replayDay").value)));
+
+// ── AI 음성 회의: 그날 대화를 담당자별로 요약한 대본을 팀원들이 목소리로 읽고, 신대표님은 끼어들어 질문할 수 있다 ──
+$("#meetBtn").addEventListener("click", () => (S.meeting ? stopMeeting() : startMeeting($("#replayDay").value)));
+$("#meetStop").addEventListener("click", () => stopMeeting());
+$("#meetBar").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("#meetAsk").value.trim();
+  if (!q || !S.meeting) return;
+  $("#meetAsk").value = "";
+  interject(q);
+});
+$("#meetMic").addEventListener("click", () => listen());
+
+const VOICE_IDX = { shin: 0, yang: 0, leebu: 1, leejh: 2 };
+async function startMeeting(day) {
+  if (!office || !day) return;
+  if (S.replay) stopReplay();
+  unlock();
+  $("#meetBtn").disabled = true;
+  $("#meetBtn").textContent = "대본 만드는 중…";
+  let data;
+  try {
+    data = await api(`/api/meeting?day=${day}`);
+  } catch (err) {
+    $("#meetBtn").disabled = false;
+    $("#meetBtn").textContent = "🎙 AI 음성 회의";
+    $("#officeWhat").textContent = `회의를 열지 못했어요: ${err.message}`;
+    return;
+  }
+  const kriso = S.byId.kriso;
+  S.meeting = { day, lines: data.lines, i: 0, inserts: [], stopped: false, source: data.source };
+  S.replay = { timer: null, meeting: true }; // 일정 동기화가 사람을 옮기지 않게
+  office.setAmbient(false);
+  $("#meetBtn").disabled = false;
+  $("#meetBtn").textContent = "■ 회의 끝내기";
+  $("#replayBtn").disabled = true;
+  $("#meetBar").hidden = false;
+  $("#officeNow").hidden = true;
+  office.focusFloor(kriso.floor);
+  const d = Date.parse(day + "T00:00:00+09:00");
+  $("#officeWhen").textContent = `${md(d)}(${wd(d)}) AI 회의${data.source === "llm" ? " · LLM" : ""}`;
+  $("#officeWhat").textContent = "모두 회의 테이블로 모이는 중…";
+  const members = kriso.members.map((m) => m.id);
+  await Promise.all(members.map((id, k) => {
+    office.hideBubble(id);
+    office.setState(id, "moving");
+    return office.moveTo(id, { floor: kriso.floor, kind: "meeting", slot: k }).then(() => office.setState(id, "present"));
+  }));
+  runMeeting();
+}
+
+async function runMeeting() {
+  const M = S.meeting;
+  while (M && !M.stopped) {
+    let line = null;
+    if (M.inserts.length) {
+      const item = M.inserts.shift();
+      line = item.pending ? await item.pending : item;
+    } else if (M.i < M.lines.length) line = M.lines[M.i++];
+    else break;
+    if (M.stopped || !line) continue;
+    const who = line.who;
+    const name = S.people[who]?.name || who;
+    office.showBubble(who, line.human ? "human" : "say", line.text);
+    office.setState(who, "meeting");
+    $("#officeWhat").textContent = `${line.human ? "🙋 " : ""}${name}: ${line.text}`;
+    await speakAs(S.people[who], line.text, { index: VOICE_IDX[who] || 0 });
+    office.hideBubble(who);
+    office.setState(who, "present");
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (S.meeting === M && !M.stopped) stopMeeting(true);
+}
+
+function interject(q) {
+  const M = S.meeting;
+  if (!M) return;
+  M.inserts.push({ who: "shin", text: q, human: true });
+  M.inserts.push({ pending: api("/api/meeting/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, day: M.day }) }).catch(() => ({ who: "yang", text: "지금은 답을 가져오지 못했어요. 이따 다시 확인할게요." })) });
+  stopSpeaking(); // 지금 말하던 사람은 말을 멈추고 신대표님 차례로
+}
+
+function stopMeeting(finished = false) {
+  if (!S.meeting) return;
+  S.meeting.stopped = true;
+  S.meeting = null;
+  stopSpeaking();
+  S.replay = null;
+  office?.setAmbient(true);
+  $("#meetBtn").textContent = "🎙 AI 음성 회의";
+  $("#replayBtn").disabled = false;
+  $("#meetBar").hidden = true;
+  for (const id of Object.keys(S.people)) office?.hideBubble(id);
+  if (finished && isVoiceEnabled()) announce("AI 음성 회의를 마쳤어요.", "done");
+  syncOffice(false);
+}
+
+// 마이크로 질문하기 (크롬·엣지·안드로이드 크롬)
+let rec = null;
+function listen() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return ($("#meetAsk").placeholder = "이 브라우저는 음성 입력을 지원하지 않아요. 글로 써 주세요.");
+  if (rec) return rec.stop();
+  rec = new SR();
+  rec.lang = "ko-KR";
+  rec.interimResults = true;
+  $("#meetMic").classList.add("on");
+  rec.onresult = (e) => {
+    const r = e.results[e.results.length - 1];
+    $("#meetAsk").value = r[0].transcript;
+    if (r.isFinal && S.meeting) {
+      $("#meetAsk").value = "";
+      interject(r[0].transcript.trim());
+    }
+  };
+  rec.onend = rec.onerror = () => {
+    $("#meetMic").classList.remove("on");
+    rec = null;
+  };
+  rec.start();
+}
 
 async function startReplay(day) {
   if (!office || !day) return;

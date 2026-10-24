@@ -640,3 +640,22 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
   .bd-lower { grid-template-columns: 1fr; }
   .chat { max-height: 70vh; }
 }
+
+/* ═══════════ AI 음성 회의 · 끼어들기 ═══════════ */
+.meet-bar { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%); bottom: 64px; display: flex; align-items: center; gap: 6px; width: min(640px, calc(100% - 24px));
+  background: rgba(20, 16, 40, 0.82); border: 1px solid rgba(255,255,255,0.25); border-radius: 999px; padding: 6px 6px 6px 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); backdrop-filter: blur(6px); }
+.meet-bar[hidden] { display: none; }
+.meet-live { display: inline-flex; align-items: center; gap: 6px; color: #fecaca; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.meet-live i { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: pulse 1s infinite; }
+.meet-bar input { flex: 1; min-width: 0; border: 0; border-radius: 999px; padding: 8px 12px; font: inherit; font-size: 13px; background: rgba(255,255,255,0.95); color: #1a1f2e; }
+.meet-bar button { border: 0; border-radius: 999px; padding: 8px 12px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; background: #fff; color: #1a1f2e; white-space: nowrap; }
+.meet-bar button[type="submit"] { background: #2563eb; color: #fff; }
+.meet-bar .meet-stop { background: rgba(255,255,255,0.15); color: #fff; }
+#meetMic.on { background: #ef4444; color: #fff; animation: pulse 1s infinite; }
+.bubble3d.human { background: #1e40af; color: #fff; }
+@media (max-width: 760px) {
+  .meet-bar { bottom: 58px; padding: 5px; gap: 4px; }
+  .meet-live { display: none; }
+  .meet-bar button { padding: 7px 9px; font-size: 12px; }
+  .meet-bar .meet-stop { padding: 7px 8px; }
+}

@@ -124,8 +124,16 @@
             <label class="sr-only" for="replayDay">재생할 날짜</label>
             <select id="replayDay"></select>
             <button type="button" id="replayBtn">▶ 단톡방 대화 재생</button>
+            <button type="button" id="meetBtn" title="그날 대화를 담당자별로 요약해 AI 팀원들이 목소리로 회의합니다">🎙 AI 음성 회의</button>
           </div>
         </div>
+        <form class="meet-bar" id="meetBar" hidden autocomplete="off">
+          <span class="meet-live"><i></i>회의 중</span>
+          <input id="meetAsk" type="text" maxlength="300" placeholder="끼어들기: 질문하면 담당자가 답해요" />
+          <button type="button" id="meetMic" title="말로 질문하기">🎤</button>
+          <button type="submit">끼어들기</button>
+          <button type="button" id="meetStop" class="meet-stop">■ 끝내기</button>
+        </form>
         <div class="office-status" id="officeStatus">
           <span class="office-when" id="officeWhen">지금</span>
           <span class="office-what" id="officeWhat"></span>
