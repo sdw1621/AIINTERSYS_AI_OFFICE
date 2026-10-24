@@ -125,7 +125,7 @@ export async function answer(question, messages, insights) {
   // 규칙 기반: 업무·마감·결정·대화에서 낱말이 가장 많이 겹치는 것을 찾아 담당자가 답한다
   const cands = [];
   for (const t of insights?.tasks || []) cands.push({ who: t.who, score: overlap(question, `${t.title} ${t.detail || ""}`), text: `${t.title} 건은 ${{ todo: "아직 시작 전이에요", doing: "진행 중이에요", done: "끝났어요" }[t.status] || t.status}.${t.detail ? ` ${cut(t.detail, 70)}` : ""}` });
-  for (const d of insights?.deadlines || []) cands.push({ who: "leebu", score: overlap(question, `${d.title} ${d.note || ""} ${d.date ? md(d.date) : ""} 마감 제출 언제`), text: `${d.title}은 ${d.date ? md(d.date) + "까지" : "날짜를 확인해야 해요"}예요.${d.note ? ` ${cut(d.note, 60)}` : ""}` });
+  for (const d of insights?.deadlines || []) cands.push({ who: "leebu", score: overlap(question, `${d.title} ${d.note || ""} ${d.date ? md(d.date) : ""} 마감 제출 언제`), text: `${d.title}은 ${d.date ? md(d.date) + "까지예요" : "아직 날짜가 안 정해졌어요"}.${d.note ? ` ${cut(d.note, 60)}` : ""}` });
   for (const d of insights?.decisions || []) cands.push({ who: "yang", score: overlap(question, d.text), text: `그건 ${md(d.date)}에 정했어요. ${cut(d.text, 90)}` });
   for (const m of messages.slice(-200)) if (m.kind === "text" && m.person && m.person !== "shin") cands.push({ who: m.person, score: overlap(question, m.text) / (1 + words(m.text).length / 20), text: `단톡방에 남긴 대로예요. ${cut(clean(m.text), 100)}` });
   for (const c of cands) if (!c.text.startsWith("단톡방")) c.score += c.score > 0 ? 0.6 : 0; // 업무 보드 쪽을 조금 더 믿는다
