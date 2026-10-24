@@ -253,6 +253,11 @@ export async function addBot({ role, who, text, kind = "text", status = "done", 
 // 노드·관계 누적: 같은 노드는 언급 횟수, 같은 관계는 가중치가 올라간다
 export async function upsertKG(nodes = [], edges = [], sourceMsg = null) {
   await ensureBot();
+  // 한 번에 같은 id가 두 번 들어가면 ON CONFLICT가 실패하므로 미리 합친다
+  const nm = new Map();
+  for (const n of nodes) if (n?.id && n.label && n.type) nm.set(n.id, { ...nm.get(n.id), ...n, mention: n.mention || nm.get(n.id)?.mention });
+  nodes = [...nm.values()];
+  edges = [...new Map(edges.filter((e) => e?.src && e.rel && e.dst && e.src !== e.dst).map((e) => [`${e.src}|${e.rel}|${e.dst}`, { src: e.src, rel: e.rel, dst: e.dst }])).values()];
   if (nodes.length) {
     await sql`
       INSERT INTO office_kg_nodes (id, label, type, props, mentions)
