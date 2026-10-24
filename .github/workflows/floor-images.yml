@@ -20,7 +20,6 @@ jobs:
             curl -sSfL "$url" -o "/tmp/$k.png"
             cwebp -quiet -q 82 -resize 2048 0 "/tmp/$k.png" -o "$k.webp"
             cwebp -quiet -q 60 -resize 640 0 "/tmp/$k.png" -o "$k-thumb.webp"
-            convert "/tmp/$k.png" -resize 900x -quality 70 "$k-preview.jpg"
           done
           ls -la
       - name: 커밋
