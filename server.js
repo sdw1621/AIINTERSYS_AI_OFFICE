@@ -2,10 +2,11 @@ import express from "express";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { PEOPLE, publicProjects } from "./src/projects.js";
+import { PEOPLE, PROJECTS, publicProjects } from "./src/projects.js";
 import { getEvents, calendarConfigured } from "./src/calendar.js";
-import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgCount } from "./src/db.js";
-import { seedGraph, extractFromText } from "./src/kg.js";
+import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgScopeCount, botProject } from "./src/db.js";
+import { seedProject, extractFromText } from "./src/kg.js";
+import { quickAnswer } from "./src/bot.js";
 import { parseKakao } from "./src/chat.js";
 import { meetingScript, answer, llmEnabled } from "./src/meeting.js";
 
@@ -167,59 +168,70 @@ app.post("/api/meeting/ask", requireCode, requireDb, async (req, res) => {
   }
 });
 
-// ── 지피 대화창: 메시지 → DB 적재 + 지식 그래프 누적 → 빠른 답(단톡방 기록) + 지피 답(나중에) ──
-async function ensureSeed() {
-  if ((await kgCount()) > 0) return;
-  const g = seedGraph(await getInsights("kriso"));
-  await upsertKG(g.nodes, g.edges);
+// ── 지피 대화창(층별): 메시지 → DB 적재 + 그 층 지식 그래프 누적 → 빠른 답(그 층 지식) + 지피 답(나중에) ──
+const SCOPES = new Set(["all", ...PROJECTS.map((p) => p.id)]);
+const scopeOf = (v) => (SCOPES.has(String(v)) ? String(v) : "all");
+async function ensureSeed(scope) {
+  const list = scope === "all" ? PROJECTS : PROJECTS.filter((p) => p.id === scope);
+  for (const pr of list) {
+    if ((await kgScopeCount(pr.id)) > 0) continue;
+    const g = seedProject(pr, pr.id === "kriso" ? await getInsights("kriso") : null);
+    await upsertKG(g.nodes, g.edges, null, pr.id);
+  }
 }
 app.get("/api/bot", requireCode, requireDb, async (req, res) => {
   try {
     const after = Math.max(0, Number(req.query.after) || 0);
-    res.json({ messages: await listBot({ after }), llm: llmEnabled });
+    res.json({ messages: await listBot({ after, project: scopeOf(req.query.project) }), llm: llmEnabled });
   } catch (err) {
     dbError(res, err);
   }
 });
 app.post("/api/bot", requireCode, requireDb, async (req, res) => {
   const text = String(req.body?.text || "").trim().slice(0, 1000);
+  const project = scopeOf(req.body?.project);
   if (!text) return res.status(400).json({ error: "메시지가 비어 있어요." });
   try {
-    await ensureSeed();
-    const mine = await addBot({ role: "user", who: "shin", text, status: "pending" });
-    const known = (await getKG()).nodes;
+    await ensureSeed(project);
+    const mine = await addBot({ role: "user", who: "shin", text, status: "pending", project });
+    const known = (await getKG(project)).nodes;
     const g = extractFromText(text, known);
     g.nodes.push({ id: "person:shin", label: "신동욱", type: "Person", mention: false });
     for (const n of g.nodes) if (n.id !== "person:shin") g.edges.push({ src: "person:shin", rel: "ASKED_ABOUT", dst: n.id });
-    await upsertKG(g.nodes, g.edges, mine.id);
-    // 빠른 답: 단톡방 기록·업무 보드에서 찾은 것 (LLM이 연결돼 있으면 LLM 답)
-    const [recent, insights] = await Promise.all([listChat("kriso", { limit: 200 }), getInsights("kriso")]);
-    const a = await answer(text, recent, insights);
+    if (project !== "all") for (const n of g.nodes) if (n.type !== "Person" && n.type !== "Project") g.edges.push({ src: n.id, rel: "PART_OF", dst: `project:${project}` });
+    await upsertKG(g.nodes, g.edges, mine.id, project);
+    // 빠른 답: 그 층의 지식에서만 찾는다 (LLM이 연결돼 있으면 KRISO는 LLM 답)
+    const [chat, insights, history] = project === "kriso" || project === "all"
+      ? await Promise.all([listChat("kriso", { limit: 200 }), getInsights("kriso"), listBot({ project, limit: 200 })])
+      : [[], null, await listBot({ project, limit: 200 })];
+    const a = await quickAnswer(text, project, { chat, insights, history: history.filter((m) => m.id !== mine.id) });
     const kind = a.source === "llm" ? "answer" : "quick";
-    await addBot({ role: "bot", who: a.source === "llm" ? "jipi" : a.who, text: a.text, kind, replyTo: mine.id });
+    await addBot({ role: "bot", who: a.source === "llm" ? "jipi" : a.who, text: a.text, kind, replyTo: mine.id, project });
     res.json({ ok: true, id: mine.id, linked: g.nodes.filter((n) => n.mention).map((n) => n.label) });
   } catch (err) {
     dbError(res, err);
   }
 });
-// 지피(또는 로컬 LLM 작업자)가 답과 새 지식을 올리는 곳
+// 지피(또는 로컬 LLM 작업자)가 답과 새 지식을 올리는 곳 — 층은 원래 메시지를 따른다
 app.post("/api/bot/answer", requireCodeOrImportKey, requireDb, async (req, res) => {
   const replyTo = Number(req.body?.reply_to) || null;
   const text = String(req.body?.text || "").trim().slice(0, 4000);
   if (!text) return res.status(400).json({ error: "답이 비어 있어요." });
   try {
-    const r = await addBot({ role: "bot", who: "jipi", text, kind: "answer", replyTo });
+    const project = replyTo ? await botProject(replyTo) : scopeOf(req.body?.project);
+    const r = await addBot({ role: "bot", who: "jipi", text, kind: "answer", replyTo, project });
     const kg = req.body?.kg || {};
-    await upsertKG(Array.isArray(kg.nodes) ? kg.nodes : [], Array.isArray(kg.edges) ? kg.edges : [], replyTo);
+    await upsertKG(Array.isArray(kg.nodes) ? kg.nodes : [], Array.isArray(kg.edges) ? kg.edges : [], replyTo, project);
     res.json({ ok: true, id: r.id });
   } catch (err) {
     dbError(res, err);
   }
 });
-app.get("/api/kg", requireCode, requireDb, async (_req, res) => {
+app.get("/api/kg", requireCode, requireDb, async (req, res) => {
+  const scope = scopeOf(req.query.scope);
   try {
-    await ensureSeed();
-    res.json(await getKG());
+    await ensureSeed(scope);
+    res.json({ scope, ...(await getKG(scope)) });
   } catch (err) {
     dbError(res, err);
   }

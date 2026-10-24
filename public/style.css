@@ -699,3 +699,4 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 }
 .agent-dialog:has(.kg-wrap) { width: min(900px, calc(100vw - 32px)); }
 .kg-wrap { width: 100%; }
+.bot-scope { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: 4px; vertical-align: 2px; color: #fff; background: var(--c, #64748b); }

@@ -228,6 +228,14 @@ function ensureBot() {
         created_at  TIMESTAMPTZ DEFAULT now(),
         PRIMARY KEY (src, rel, dst)
       )`;
+    // 층(프로젝트)별 지식: 대화와 노드·관계에 층 범위를 붙인다 (all = 타워 전체 / 사람·프로젝트처럼 공통)
+    await sql`ALTER TABLE office_bot ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'kriso'`;
+    await sql`ALTER TABLE office_kg_nodes ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'kriso'`;
+    await sql`ALTER TABLE office_kg_edges ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'kriso'`;
+    await sql`CREATE INDEX IF NOT EXISTS office_bot_project ON office_bot (project, id)`;
+    // 처음 만든 뼈대(전부 kriso로 들어간 것) 바로잡기: 사람·프로젝트는 공통, 배정 관계는 그 프로젝트 층
+    await sql`UPDATE office_kg_nodes SET scope = 'all' WHERE type IN ('Person', 'Project') AND scope <> 'all'`;
+    await sql`UPDATE office_kg_edges SET scope = split_part(dst, ':', 2) WHERE rel = 'WORKS_ON' AND dst LIKE 'project:%' AND scope <> split_part(dst, ':', 2)`;
   })().catch((err) => {
     botReady = null;
     throw err;
@@ -235,52 +243,71 @@ function ensureBot() {
   return botReady;
 }
 
-export async function listBot({ after = 0, limit = 80 } = {}) {
+export async function listBot({ after = 0, limit = 80, project = "all" } = {}) {
   await ensureBot();
   const rows = after
-    ? await sql`SELECT * FROM office_bot WHERE id > ${after} ORDER BY id LIMIT ${limit}`
-    : await sql`SELECT * FROM (SELECT * FROM office_bot ORDER BY id DESC LIMIT ${limit}) x ORDER BY id`;
+    ? await sql`SELECT * FROM office_bot WHERE id > ${after} AND project = ${project} ORDER BY id LIMIT ${limit}`
+    : await sql`SELECT * FROM (SELECT * FROM office_bot WHERE project = ${project} ORDER BY id DESC LIMIT ${limit}) x ORDER BY id`;
   return rows.map((r) => ({ ...r, id: Number(r.id), reply_to: r.reply_to && Number(r.reply_to), created_at: new Date(r.created_at).toISOString() }));
 }
 
-export async function addBot({ role, who, text, kind = "text", status = "done", replyTo = null }) {
+export async function addBot({ role, who, text, kind = "text", status = "done", replyTo = null, project = "all" }) {
   await ensureBot();
-  const [r] = await sql`INSERT INTO office_bot (role, who, text, kind, status, reply_to) VALUES (${role}, ${who}, ${text}, ${kind}, ${status}, ${replyTo}) RETURNING id, created_at`;
+  const [r] = await sql`INSERT INTO office_bot (role, who, text, kind, status, reply_to, project) VALUES (${role}, ${who}, ${text}, ${kind}, ${status}, ${replyTo}, ${project}) RETURNING id, created_at`;
   if (replyTo && kind === "answer") await sql`UPDATE office_bot SET status = 'done' WHERE id = ${replyTo}`;
   return { id: Number(r.id), created_at: new Date(r.created_at).toISOString() };
 }
 
 // 노드·관계 누적: 같은 노드는 언급 횟수, 같은 관계는 가중치가 올라간다
-export async function upsertKG(nodes = [], edges = [], sourceMsg = null) {
+export async function botProject(id) {
+  await ensureBot();
+  const [r] = await sql`SELECT project FROM office_bot WHERE id = ${id}`;
+  return r?.project || "all";
+}
+
+export async function upsertKG(nodes = [], edges = [], sourceMsg = null, scope = "all") {
   await ensureBot();
   // 한 번에 같은 id가 두 번 들어가면 ON CONFLICT가 실패하므로 미리 합친다
   const nm = new Map();
   for (const n of nodes) if (n?.id && n.label && n.type) nm.set(n.id, { ...nm.get(n.id), ...n, mention: n.mention || nm.get(n.id)?.mention });
   nodes = [...nm.values()];
-  edges = [...new Map(edges.filter((e) => e?.src && e.rel && e.dst && e.src !== e.dst).map((e) => [`${e.src}|${e.rel}|${e.dst}`, { src: e.src, rel: e.rel, dst: e.dst }])).values()];
+  edges = [...new Map(edges.filter((e) => e?.src && e.rel && e.dst && e.src !== e.dst).map((e) => [`${e.src}|${e.rel}|${e.dst}`, { src: e.src, rel: e.rel, dst: e.dst, scope: e.scope || scope }])).values()];
   if (nodes.length) {
     await sql`
-      INSERT INTO office_kg_nodes (id, label, type, props, mentions)
-      SELECT x.id, x.label, x.type, COALESCE(x.props, '{}'::jsonb), x.m
-      FROM jsonb_to_recordset(${JSON.stringify(nodes.map((n) => ({ id: n.id, label: n.label, type: n.type, props: n.props || {}, m: n.mention ? 1 : 0 })))}::jsonb)
-        AS x(id text, label text, type text, props jsonb, m int)
+      INSERT INTO office_kg_nodes (id, label, type, props, mentions, scope)
+      SELECT x.id, x.label, x.type, COALESCE(x.props, '{}'::jsonb), x.m, x.scope
+      FROM jsonb_to_recordset(${JSON.stringify(nodes.map((n) => ({ id: n.id, label: n.label, type: n.type, props: n.props || {}, m: n.mention ? 1 : 0, scope: n.scope || (n.type === "Person" || n.type === "Project" ? "all" : scope) })))}::jsonb)
+        AS x(id text, label text, type text, props jsonb, m int, scope text)
       ON CONFLICT (id) DO UPDATE SET mentions = office_kg_nodes.mentions + EXCLUDED.mentions,
         props = office_kg_nodes.props || EXCLUDED.props, updated_at = now()`;
   }
   if (edges.length) {
     await sql`
-      INSERT INTO office_kg_edges (src, rel, dst, source_msg)
-      SELECT x.src, x.rel, x.dst, ${sourceMsg}::bigint
-      FROM jsonb_to_recordset(${JSON.stringify(edges)}::jsonb) AS x(src text, rel text, dst text)
+      INSERT INTO office_kg_edges (src, rel, dst, source_msg, scope)
+      SELECT x.src, x.rel, x.dst, ${sourceMsg}::bigint, x.scope
+      FROM jsonb_to_recordset(${JSON.stringify(edges)}::jsonb) AS x(src text, rel text, dst text, scope text)
       WHERE EXISTS (SELECT 1 FROM office_kg_nodes WHERE id = x.src) AND EXISTS (SELECT 1 FROM office_kg_nodes WHERE id = x.dst)
       ON CONFLICT (src, rel, dst) DO UPDATE SET weight = office_kg_edges.weight + 1`;
   }
 }
 
-export async function getKG() {
+// 층별 보기: 그 층 범위의 관계와, 거기 이어진 노드(공통 노드 포함)만. all이면 전체
+export async function getKG(scope = "all") {
   await ensureBot();
-  const [nodes, edges] = await Promise.all([sql`SELECT id, label, type, props, mentions FROM office_kg_nodes ORDER BY mentions DESC, id`, sql`SELECT src, rel, dst, weight FROM office_kg_edges`]);
+  if (scope === "all") {
+    const [nodes, edges] = await Promise.all([sql`SELECT id, label, type, props, mentions, scope FROM office_kg_nodes ORDER BY mentions DESC, id`, sql`SELECT src, rel, dst, weight, scope FROM office_kg_edges`]);
+    return { nodes, edges };
+  }
+  const edges = await sql`SELECT src, rel, dst, weight, scope FROM office_kg_edges WHERE scope = ${scope}`;
+  const ids = [...new Set(edges.flatMap((e) => [e.src, e.dst]))];
+  const nodes = await sql`SELECT id, label, type, props, mentions, scope FROM office_kg_nodes WHERE scope = ${scope} OR id = ANY(${ids}) ORDER BY mentions DESC, id`;
   return { nodes, edges };
+}
+
+export async function kgScopeCount(scope) {
+  await ensureBot();
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM office_kg_edges WHERE scope = ${scope}`;
+  return n;
 }
 
 export async function kgCount() {

@@ -460,6 +460,7 @@ function buildFloorButtons() {
 }
 function paintFloorButtons(n) {
   for (const b of $$("#floorSwitch [data-f]")) b.classList.toggle("active", Number(b.dataset.f) === n);
+  setBotScope(S.projects.find((p) => p.floor === n)?.id || "all");
 }
 
 // 자리에 앉아 있을 때 머리 위에 띄울 지금 하는 일: KRISO는 단톡방 업무 보드, 나머지는 맡은 역할
@@ -972,7 +973,21 @@ setupSound();
 })();
 
 // ═══════════ 지피와 대화 · 지식 그래프 ═══════════
-const BOT = { msgs: [], last: 0, timer: null, sending: false };
+const BOT = { msgs: [], last: 0, timer: null, sending: false, scope: "all" };
+// 층마다 대화·지식이 따로: 층을 고르면 그 층 대화로 바뀐다 (전체 타워 = 공통 대화)
+function setBotScope(scope) {
+  if (scope === BOT.scope) return;
+  BOT.scope = scope;
+  BOT.msgs = [];
+  BOT.last = 0;
+  const p = S.projects?.find((x) => x.id === scope);
+  const label = $("#botScope");
+  if (label) { label.textContent = p ? `${p.floor}F ${p.short}` : "타워 전체"; label.style.setProperty("--c", p?.color || "#64748b"); }
+  const inp = $("#botInput");
+  if (inp) inp.placeholder = p ? `${p.short}에 대해 묻거나 기억할 내용 남기기` : "층을 고르면 그 층 지식으로 답해요 · 전체 질문도 OK";
+  $("#botList").innerHTML = `<p class="empty">불러오는 중…</p>`;
+  if (BOT.timer) { pollBot(); loadKGCount(); }
+}
 function botNote(t) { const n = $(".bot-note"); if (!n) return; n.dataset.base ??= n.textContent; n.textContent = t; clearTimeout(botNote.t); botNote.t = setTimeout(() => (n.textContent = n.dataset.base), 6000); }
 const JIPI = { id: "jipi", name: "지피", color: "#6366f1" };
 const botWho = (who) => (who === "jipi" ? JIPI : S.people?.[who] || { id: who, name: who, color: "#94a3b8" });
@@ -997,7 +1012,9 @@ function renderBot() {
 async function pollBot() {
   if (document.hidden && BOT.msgs.length) return;
   try {
-    const r = await api(`/api/bot?after=${BOT.last}`);
+    const scope = BOT.scope;
+    const r = await api(`/api/bot?after=${BOT.last}&project=${scope}`);
+    if (scope !== BOT.scope) return;
     const fresh = (r.messages || []).filter((m) => !BOT.msgs.some((x) => x.id === m.id));
     if (r.messages?.length) {
       // 상태가 바뀐 기존 메시지(대기→완료)도 반영
@@ -1015,7 +1032,7 @@ async function pollBot() {
 }
 
 async function loadKGCount() {
-  try { const g = await api("/api/kg"); $("#kgCount").textContent = g.nodes?.length ? `· ${g.nodes.length}` : ""; return g; } catch { return null; }
+  try { const g = await api(`/api/kg?scope=${BOT.scope}`); $("#kgCount").textContent = g.nodes?.length ? `· ${g.nodes.length}` : ""; return g; } catch { return null; }
 }
 
 function startBot() {
@@ -1034,7 +1051,7 @@ $("#botForm")?.addEventListener("submit", async (e) => {
   BOT.msgs.push({ id: `tmp${Date.now()}`, role: "user", who: "shin", text, status: "pending", kind: "text", created_at: new Date().toISOString() });
   renderBot();
   try {
-    const r = await api("/api/bot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    const r = await api("/api/bot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, project: BOT.scope }) });
     BOT.msgs = BOT.msgs.filter((m) => !String(m.id).startsWith("tmp"));
     await pollBot();
     if (r.linked?.length) botNote(`🧠 기억에 연결: ${r.linked.slice(0, 4).join(", ")}${r.linked.length > 4 ? " 외" : ""}`);
@@ -1051,8 +1068,8 @@ $("#botInput")?.addEventListener("keydown", (e) => {
 });
 
 // 지식 그래프: 간단한 힘 배치(외부 라이브러리 없이)
-const KG_COLORS = { Person: "#60a5fa", Project: "#f59e0b", Task: "#10b981", Deadline: "#ef4444", Decision: "#a855f7", Date: "#94a3b8", Topic: "#ec4899" };
-const KG_NAMES = { Person: "사람", Project: "프로젝트", Task: "업무", Deadline: "마감", Decision: "결정", Date: "날짜", Topic: "주제" };
+const KG_COLORS = { Org: "#14b8a6", Person: "#60a5fa", Project: "#f59e0b", Task: "#10b981", Deadline: "#ef4444", Decision: "#a855f7", Date: "#94a3b8", Topic: "#ec4899" };
+const KG_NAMES = { Org: "기관", Person: "사람", Project: "프로젝트", Task: "업무", Deadline: "마감", Decision: "결정", Date: "날짜", Topic: "주제" };
 function layoutKG(nodes, edges, W, H) {
   const idx = new Map(nodes.map((n, i) => [n.id, i]));
   const P = nodes.map((n, i) => ({ x: W / 2 + Math.cos(i * 2.4) * (60 + i * 6), y: H / 2 + Math.sin(i * 2.4) * (60 + i * 6), vx: 0, vy: 0 }));
@@ -1077,7 +1094,7 @@ function layoutKG(nodes, edges, W, H) {
   return { P, E };
 }
 $("#kgBtn")?.addEventListener("click", async () => {
-  openDialog("🧠 지식 그래프 (메모리)", `<p class="empty">불러오는 중…</p>`);
+  openDialog(`🧠 지식 그래프 · ${esc($("#botScope")?.textContent || "타워 전체")}`, `<p class="empty">불러오는 중…</p>`);
   const g = await loadKGCount();
   if (!g) { $("#dialogBody").innerHTML = `<p class="empty">불러오지 못했어요.</p>`; return; }
   const nodes = [...g.nodes].sort((a, b) => (b.mentions || 0) - (a.mentions || 0)).slice(0, 80);

@@ -102,10 +102,12 @@ export async function meetingScript(day, messages, insights) {
 }
 
 // 끼어들기: 질문에 가장 관련 있는 사람이 답한다
-const words = (t) => (t.toLowerCase().match(/[가-힣a-z0-9]{2,}/g) || []).map((w) => w.replace(/(은|는|이|가|을|를|에|의|도|요|죠|나요|까요|해요)$/, ""));
-function overlap(q, t) {
+// 뜻 없는 말(관련·내용·뭐·남았지…)은 빼고 겹침을 센다 — "관련"만 같아서 엉뚱한 답이 나오던 문제
+const STOP = new Set("관련 내용 검토 문법 뭐야 뭐가 뭐지 뭐 어떻게 어떤 언제 어디 누구 남았지 남은 있어 있나 알려줘 알려 해줘 정리 확인 부분 지금 이번 그거 이거 저거 그리고 그런데 대한 대해 관한 위한 하는 하기 했어 했나 됐어 되나 요즘 혹시 좀 그냥 진짜 정도 거기 여기 것 거 수 등 및".split(" "));
+export const words = (t) => (t.toLowerCase().match(/[가-힣a-z0-9]{2,}/g) || []).map((w) => w.replace(/(은|는|이|가|을|를|에|의|도|요|죠|나요|까요|해요|이야|야|인가|이지|지)$/, "")).filter((w) => w.length >= 2 && !STOP.has(w));
+export function overlap(q, t) {
   const a = new Set(words(q));
-  return words(t).reduce((n, w) => n + (a.has(w) || [...a].some((x) => x.length >= 2 && (w.includes(x) || x.includes(w))) ? 1 : 0), 0);
+  return words(t).reduce((n, w) => n + (a.has(w) || [...a].some((x) => x.length >= 2 && w.length >= 2 && (w.includes(x) || x.includes(w))) ? 1 : 0), 0);
 }
 export async function answer(question, messages, insights) {
   if (llmEnabled) {
@@ -128,6 +130,6 @@ export async function answer(question, messages, insights) {
   for (const m of messages.slice(-200)) if (m.kind === "text" && m.person && m.person !== "shin") cands.push({ who: m.person, score: overlap(question, m.text) / (1 + words(m.text).length / 20), text: `단톡방에 남긴 대로예요. ${cut(clean(m.text), 100)}` });
   for (const c of cands) if (!c.text.startsWith("단톡방")) c.score += c.score > 0 ? 0.6 : 0; // 업무 보드 쪽을 조금 더 믿는다
   const best = cands.filter((c) => PEOPLE[c.who] && c.who !== "shin").sort((a, b) => b.score - a.score)[0];
-  if (best && best.score > 0) return { source: "template", who: best.who, text: best.text };
-  return { source: "template", who: "yang", text: "그 부분은 단톡방 기록에서 찾지 못했어요. 확인해서 공유드릴게요." };
+  if (best && best.score >= 1) return { source: "template", who: best.who, text: best.text, score: best.score };
+  return { source: "template", who: "yang", text: "그 부분은 단톡방 기록에서 찾지 못했어요. 확인해서 공유드릴게요.", score: 0 };
 }
