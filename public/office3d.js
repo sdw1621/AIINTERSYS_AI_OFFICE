@@ -182,8 +182,13 @@ function bake(group) {
   }
 }
 
+const PHOTO_W = 25; // 층 사진 가로폭이 월드 좌표로 몇 m에 해당하는지 (캐릭터 크기가 가구와 맞도록)
+const ISO_DIR = new THREE.Vector3(1, 1.08, 1.12).normalize();
+
 export class Office3D {
-  constructor(container, { onSelect, onFloor, projects = [] } = {}) {
+  constructor(container, { onSelect, onFloor, projects = [], photos = {} } = {}) {
+    this.photos = photos; // { 층: { src, w, h, seats, table, tableCenter, aisle, pois } } — 사진(AI 일러스트) 층 보기
+    this.photoLayouts = {};
     FLOORS = Math.max(1, projects.length);
     ROOF_Y = floorY(FLOORS + 1);
     this.container = container;
@@ -207,6 +212,11 @@ export class Office3D {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.photoEl = document.createElement("img");
+    this.photoEl.className = "photo-floor";
+    this.photoEl.alt = "";
+    this.photoEl.hidden = true;
+    container.append(this.photoEl);
     container.append(this.renderer.domElement);
 
     this.labels = new CSS2DRenderer();
@@ -214,7 +224,8 @@ export class Office3D {
     container.append(this.labels.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = this.makeSky();
+    this.sky = this.makeSky();
+    this.scene.background = this.sky;
 
     this.camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 300);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -257,6 +268,59 @@ export class Office3D {
     for (const g of Object.values(this.floorGroups)) bake(g);
     bake(this.exterior);
     bake(this.crown);
+    this.applyPhotoLayouts();
+  }
+
+  // ── 사진 층: 사진 위 점(가로·세로 비율)을 그 층 바닥의 월드 좌표로 바꾼다 ──
+  photoCamera(f) {
+    const ph = this.photos[f];
+    const H = PHOTO_W * ph.h / ph.w;
+    const cam = new THREE.OrthographicCamera(-PHOTO_W / 2, PHOTO_W / 2, H / 2, -H / 2, 0.1, 300);
+    const target = V(0, 0, floorY(f));
+    cam.position.copy(target).add(ISO_DIR.clone().multiplyScalar(80));
+    cam.lookAt(target);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+    return { cam, target };
+  }
+
+  photoPoint(f, [u, v]) {
+    const { cam } = this.photoCamera(f);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(u * 2 - 1, 1 - v * 2), cam);
+    const hit = new THREE.Vector3();
+    ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -floorY(f)), hit);
+    return hit;
+  }
+
+  applyPhotoLayouts() {
+    for (const [fs, ph] of Object.entries(this.photos)) {
+      const f = Number(fs);
+      const P = (uv) => this.photoPoint(f, uv);
+      const yawTo = (from, to) => Math.atan2(to.x - from.x, to.z - from.z);
+      const L = { aisle: P(ph.aisle), tableCenter: P(ph.tableCenter), table: ph.table.map(P) };
+      L.pois = (ph.pois || []).map((o) => {
+        const pos = P(o.at);
+        return { pos, yaw: yawTo(pos, P(o.look)), lines: o.lines, kind: o.kind };
+      });
+      this.photoLayouts[f] = L;
+      this.pois[f] = L.pois;
+      for (const a of this.agents.values()) {
+        const seat = a.seats[f];
+        const uv = ph.seats?.[a.def.id];
+        if (!seat || !uv) continue;
+        seat.home = P(uv);
+        seat.yaw = ph.deskLook ? yawTo(seat.home, P(ph.deskLook[a.def.id] || ph.deskLook.default)) : Math.PI;
+        if (a.spot.floor === f && a.spot.kind === "desk") {
+          a.parts.root.position.copy(seat.home);
+          a.restYaw = a.yaw = seat.yaw;
+        }
+      }
+    }
+  }
+
+  isPhoto(f) {
+    return Boolean(this.photoLayouts[f]);
   }
 
   // ── 카메라 ──────────────────────────────
@@ -269,6 +333,31 @@ export class Office3D {
   // 0 = 타워 전체, n = n층. 위층은 걷어내고, 카메라를 그 층으로 옮긴다.
   focusFloor(n, instant = false) {
     this.focus = n;
+    const photo = n !== 0 && this.view !== "top" && this.isPhoto(n);
+    this.photoMode = photo;
+    this.photoEl.hidden = !photo;
+    this.container.classList.toggle("is-photo", photo);
+    this.controls.enabled = !photo;
+    if (photo) {
+      const ph = this.photos[n];
+      if (this.photoEl.getAttribute("src") !== ph.src) this.photoEl.src = ph.src;
+      for (let f = 1; f <= FLOORS; f++) this.floorGroups[f].visible = false;
+      this.crown.visible = this.exterior.visible = false;
+      for (const t of this.floorTagObjs || []) t.visible = false;
+      this.scene.background = null;
+      const { target } = this.photoCamera(n);
+      this.photoTarget = target;
+      this.camGoal = null;
+      this.controls.target.copy(target);
+      this.camera.position.copy(target).add(ISO_DIR.clone().multiplyScalar(80));
+      this.camera.zoom = 1;
+      this.camera.lookAt(target);
+      this.fit = this.fit || { h: 12.6, w: 22.5 };
+      this.applyFrustum();
+      this.onFloor?.(n);
+      return;
+    }
+    this.scene.background = this.sky;
     // 층 보기에서는 그 층만 보여 준다 (아래층이 비쳐 어수선해지지 않게). 받침대는 전체 보기와 1층에서만.
     for (let f = 1; f <= FLOORS; f++) this.floorGroups[f].visible = n === 0 || f === n;
     this.crown.visible = n === 0;
@@ -320,6 +409,16 @@ export class Office3D {
   applyFrustum() {
     const { clientWidth: w, clientHeight: h } = this.container;
     const aspect = w && h ? w / h : 1.6;
+    if (this.photoMode && w && h) {
+      // 사진은 화면 안에 다 들어오게(contain) 놓이므로, 사진 폭 = PHOTO_W m 가 되도록 카메라 범위를 맞춘다
+      const ph = this.photos[this.focus];
+      const dispW = Math.min(w, h * ph.w / ph.h);
+      const width = PHOTO_W * w / dispW;
+      const height = width / aspect;
+      Object.assign(this.camera, { left: -width / 2, right: width / 2, top: height / 2, bottom: -height / 2 });
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     const portrait = aspect < 1.1 && this.focus !== 0;
     const fitW = portrait ? this.fit.w * 0.8 : this.fit.w;
     const height = Math.max(this.fit.h, fitW / aspect);
@@ -332,6 +431,7 @@ export class Office3D {
 
   // 층을 옮길 때 카메라가 부드럽게 따라가게 한다
   moveCamera(dt) {
+    if (this.photoMode) return;
     const goal = this.camGoal;
     if (!goal) return;
     const k = 1 - Math.exp(-dt * 4);
@@ -1127,6 +1227,9 @@ export class Office3D {
     const ring = mesh(new THREE.RingGeometry(0.34, 0.44, 40), ringMat, { y: 0.012, cast: false, receive: false });
     ring.rotation.x = -Math.PI / 2;
     root.add(ring);
+    const blob = mesh(new THREE.CircleGeometry(0.42, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false }), { y: 0.008, cast: false, receive: false });
+    blob.rotation.x = -Math.PI / 2;
+    root.add(blob);
 
     body.scale.setScalar(1.12);
     root.traverse((o) => (o.userData.agentId = def.id));
@@ -1255,6 +1358,12 @@ export class Office3D {
     const f = a.spot.floor;
     const y = floorY(f);
     const h = a.seats[f].home;
+    const PL = this.photoLayouts[f];
+    if (PL) {
+      const out = [PL.aisle.clone(), V(to.x, to.z, y)];
+      if (back) out.reverse().push(h.clone());
+      return out;
+    }
     const out = [V(h.x + 1.05, h.z, y)];
     if (to.z < -3) out.push(V(h.x + 1.05, -5.25, y), V(to.x, -5.25, y));
     else out.push(V(h.x + 1.05, AISLE_Z, y), V(to.x, AISLE_Z, y));
@@ -1277,9 +1386,10 @@ export class Office3D {
       if (mates.length && roll < 0.35) {
         const b = mates[Math.floor(roll * 100) % mates.length];
         const bh = b.seats[f].home;
-        const stand = V(bh.x + 1.0, bh.z, 0);
+        const PL = this.photoLayouts[f];
+        const stand = PL ? bh.clone().lerp(PL.aisle, 0.22) : V(bh.x + 1.0, bh.z, 0);
         await this.walk(a, this.errandPath(a, stand));
-        a.restYaw = -Math.PI / 2;
+        a.restYaw = Math.atan2(bh.x - stand.x, bh.z - stand.z);
         const asks = ["보고서 이 부분 같이 볼까요?", "표 번호 맞춰 볼게요", "이거 확인 좀 부탁드려요", "오늘 일정 괜찮으세요?"];
         const replies = ["네, 볼게요!", "좋아요 👍", "잠깐만요~", "그렇게 하죠!"];
         this.say(a, `${b.def.name}님, ${asks[Math.floor(roll * 40) % asks.length]}`, 4.5);
@@ -1298,7 +1408,7 @@ export class Office3D {
         a.posing = null;
         await this.walk(a, this.errandPath(a, pl.pos, true));
       }
-      a.restYaw = 0;
+      a.restYaw = a.seats[f]?.yaw ?? 0;
     });
     a.queue = job.catch(() => {}).finally(() => {
       a.errand = false;
@@ -1323,7 +1433,9 @@ export class Office3D {
       if (a.spotKey === key) return;
       const target = this.spotPoint(a, dest);
       const kind = this.kindAt(a, dest);
-      const yaw = kind === "lecture" ? Math.PI / 2 : kind === "meeting" ? Math.atan2(TABLE.x - target.x, TABLE.z - target.z) : 0;
+      const PL = this.photoLayouts[dest.floor];
+      const tc = PL ? PL.tableCenter : TABLE;
+      const yaw = kind === "lecture" ? Math.PI / 2 : kind === "meeting" ? Math.atan2(tc.x - target.x, tc.z - target.z) : a.seats[dest.floor]?.yaw ?? 0;
       if (instant) {
         a.path = [];
         a.parts.root.position.copy(target);
@@ -1349,6 +1461,8 @@ export class Office3D {
     const kind = this.kindAt(a, dest);
     if (kind === "desk") return a.seats[dest.floor].home.clone();
     if (kind === "lecture") return V(LECTERN.x, LECTERN.z, floorY(dest.floor));
+    const PL = this.photoLayouts[dest.floor];
+    if (PL) return PL.table[(dest.slot || 0) % PL.table.length].clone();
     const ang = ((dest.slot || 0) / 6) * Math.PI * 2 + 0.25;
     return V(TABLE.x + Math.sin(ang) * 1.28, TABLE.z + Math.cos(ang) * 1.28, floorY(dest.floor));
   }
@@ -1369,8 +1483,12 @@ export class Office3D {
       pts.push(V(TABLE.x + Math.sin(ang) * 1.95, TABLE.z + Math.cos(ang) * 1.95, y), V(TABLE.x + s * 2.15, TABLE.z + Math.cos(ang) * 1.95, y), V(TABLE.x + s * 2.15, AISLE_Z, y));
     };
     const kind = this.kindAt(a, dest);
+    const PLa = this.photoLayouts[this.floorOf(a)];
+    const PLt = this.photoLayouts[dest.floor];
+    if (PLa && PLt && Math.abs(ya - yt) < 0.01) return [PLa.aisle.clone(), target.clone()];
     // 출발
-    if (a.spot.kind === "desk") pts.push(V(pos.x + 1.05, pos.z, ya), V(pos.x + 1.05, AISLE_Z, ya));
+    if (PLa) pts.push(PLa.aisle.clone(), V(LIFT_DOOR.x, AISLE_Z, ya));
+    else if (a.spot.kind === "desk") pts.push(V(pos.x + 1.05, pos.z, ya), V(pos.x + 1.05, AISLE_Z, ya));
     else if (a.spot.kind === "lecture") pts.push(V(pos.x, AISLE_Z, ya));
     else leaveTable(pos, ya);
     // 층 이동
@@ -1378,7 +1496,9 @@ export class Office3D {
       pts.push(V(LIFT_DOOR.x, AISLE_Z, ya), V(LIFT_DOOR.x, LIFT_DOOR.z, ya), V(LIFT.x, LIFT.z, ya), V(LIFT.x, LIFT.z, yt), V(LIFT_DOOR.x, LIFT_DOOR.z, yt), V(LIFT_DOOR.x, AISLE_Z, yt));
     }
     // 도착
-    if (kind === "lecture") {
+    if (PLt) {
+      pts.push(PLt.aisle.clone(), target.clone());
+    } else if (kind === "lecture") {
       pts.push(V(target.x, AISLE_Z, yt), target.clone());
     } else if (kind === "desk") {
       pts.push(V(target.x + 1.05, AISLE_Z, yt), V(target.x + 1.05, target.z, yt), target.clone());

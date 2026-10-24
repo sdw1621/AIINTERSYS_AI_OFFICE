@@ -264,7 +264,7 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
 }
 .office3d canvas { display: block; touch-action: none; cursor: grab; }
 .office3d canvas:active { cursor: grabbing; }
-.labels3d { position: absolute; inset: 0; pointer-events: none; }
+.labels3d { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .office-error { padding: 24px; color: #fff; }
 .office-legend { margin-top: 10px; padding: 0 4px; }
 
@@ -659,3 +659,10 @@ main { padding: 20px 24px 0; max-width: 1560px; margin: 0 auto; }
   .meet-bar button { padding: 7px 9px; font-size: 12px; }
   .meet-bar .meet-stop { padding: 7px 8px; }
 }
+
+/* ═══════════ 사진 층 보기 (AI 일러스트 위에 3D 사람) ═══════════ */
+.photo-floor { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 0; pointer-events: none; user-select: none; }
+.photo-floor[hidden] { display: none; }
+.office3d canvas { position: relative; z-index: 1; }
+.office3d.is-photo { background: radial-gradient(ellipse at 50% 40%, #0d1630 0%, #050811 75%); }
+.office3d.is-photo canvas { cursor: default; }

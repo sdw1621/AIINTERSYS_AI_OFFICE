@@ -1,6 +1,7 @@
 // AIINTERSYS AI TOWER: 실제 프로젝트·사람·구글 캘린더 일정을 모니터링 화면과 3D 타워로 보여 준다.
 // 화면: #/monitor(첫 화면) · #/office(타워) · #/reports(보고함)
 
+import { FLOOR_PHOTOS } from "./floors/layouts.js";
 import { announce, unlock, isVoiceEnabled, setVoiceEnabled, speakAs, stopSpeaking } from "./voice.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -424,6 +425,7 @@ function ensureOffice() {
     .then(({ Office3D }) => {
       office = new Office3D($("#office3d"), {
         projects: S.projects,
+        photos: Object.fromEntries(S.projects.filter((p) => FLOOR_PHOTOS[p.id]).map((p) => [p.floor, FLOOR_PHOTOS[p.id]])),
         onSelect: (id) => openPerson(id),
         onFloor: paintFloorButtons,
       });
