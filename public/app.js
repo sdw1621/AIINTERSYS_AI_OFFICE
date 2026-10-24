@@ -935,7 +935,7 @@ function route() {
   const view = ["monitor", "office", "reports"].includes(name) ? name : "monitor";
   for (const el of $$(".view")) el.hidden = el.dataset.view !== view;
   for (const a of $$(".nav a")) a.classList.toggle("active", a.dataset.view === view);
-  if (view === "office") ensureOffice().then(() => office?.setActive(true));
+  if (view === "office") { ensureOffice().then(() => office?.setActive(true)); startBot(); }
   else office?.setActive(false);
   if (view === "reports") loadReports();
 }
@@ -970,3 +970,125 @@ setupSound();
   if (cfg.needsPasscode && !S.code) return showLock();
   start();
 })();
+
+// ═══════════ 지피와 대화 · 지식 그래프 ═══════════
+const BOT = { msgs: [], last: 0, timer: null, sending: false };
+function botNote(t) { const n = $(".bot-note"); if (!n) return; n.dataset.base ??= n.textContent; n.textContent = t; clearTimeout(botNote.t); botNote.t = setTimeout(() => (n.textContent = n.dataset.base), 6000); }
+const JIPI = { id: "jipi", name: "지피", color: "#6366f1" };
+const botWho = (who) => (who === "jipi" ? JIPI : S.people?.[who] || { id: who, name: who, color: "#94a3b8" });
+const hhmm = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+function renderBot() {
+  const box = $("#botList");
+  if (!box) return;
+  if (!BOT.msgs.length) { box.innerHTML = `<p class="empty">아직 대화가 없어요. 궁금한 걸 물어보거나, 기억해 둘 내용을 남겨 보세요.<br>예) "11/20 마감 뭐 남았지?", "#온톨로지 설계는 이재현 님 담당"</p>`; return; }
+  const answered = new Set(BOT.msgs.filter((m) => m.kind === "answer").map((m) => String(m.reply_to)));
+  box.innerHTML = BOT.msgs.map((m) => {
+    const me = m.role === "user";
+    const p = botWho(m.who);
+    const av = me ? "" : m.who === "jipi" ? `<span class="av" style="background:${JIPI.color};color:#fff">🤖</span>` : `<span class="av"><img src="${avatar(p, 56)}" alt=""></span>`;
+    const tag = me ? (m.status === "pending" && !answered.has(String(m.id)) ? `<span class="bot-tag wait">지피 답 대기</span>` : "")
+      : m.kind === "answer" ? `<span class="bot-tag ans">지피 답</span>` : `<span class="bot-tag">빠른 답 · ${esc(p.name)}</span>`;
+    return `<div class="bot-msg ${me ? "me" : ""}">${av}<div><div class="bot-bubble">${esc(m.text)}</div><span class="bot-meta">${tag}${hhmm(m.created_at)}</span></div></div>`;
+  }).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+async function pollBot() {
+  if (document.hidden && BOT.msgs.length) return;
+  try {
+    const r = await api(`/api/bot?after=${BOT.last}`);
+    const fresh = (r.messages || []).filter((m) => !BOT.msgs.some((x) => x.id === m.id));
+    if (r.messages?.length) {
+      // 상태가 바뀐 기존 메시지(대기→완료)도 반영
+      for (const m of r.messages) { const i = BOT.msgs.findIndex((x) => x.id === m.id); if (i >= 0) BOT.msgs[i] = m; }
+      BOT.msgs.push(...fresh);
+      BOT.msgs.sort((a, b) => Number(a.id) - Number(b.id));
+      BOT.last = Math.max(BOT.last, ...BOT.msgs.map((m) => Number(m.id)));
+      renderBot();
+      // 새로 온 봇 답은 타워 캐릭터 말풍선으로도
+      for (const m of fresh) if (m.role === "bot" && m.who !== "jipi" && office) office.speak?.(m.who, m.text.length > 40 ? m.text.slice(0, 40) + "…" : m.text, 6);
+    } else if (!BOT.msgs.length) renderBot();
+  } catch (err) {
+    if (!BOT.msgs.length) $("#botList").innerHTML = `<p class="empty">${esc(err.message)}</p>`;
+  }
+}
+
+async function loadKGCount() {
+  try { const g = await api("/api/kg"); $("#kgCount").textContent = g.nodes?.length ? `· ${g.nodes.length}` : ""; return g; } catch { return null; }
+}
+
+function startBot() {
+  if (BOT.timer) return;
+  pollBot(); loadKGCount();
+  BOT.timer = setInterval(pollBot, 10_000);
+}
+
+$("#botForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("#botInput");
+  const text = input.value.trim();
+  if (!text || BOT.sending) return;
+  BOT.sending = true;
+  input.value = "";
+  BOT.msgs.push({ id: `tmp${Date.now()}`, role: "user", who: "shin", text, status: "pending", kind: "text", created_at: new Date().toISOString() });
+  renderBot();
+  try {
+    const r = await api("/api/bot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    BOT.msgs = BOT.msgs.filter((m) => !String(m.id).startsWith("tmp"));
+    await pollBot();
+    if (r.linked?.length) botNote(`🧠 기억에 연결: ${r.linked.slice(0, 4).join(", ")}${r.linked.length > 4 ? " 외" : ""}`);
+    loadKGCount();
+  } catch (err) {
+    BOT.msgs = BOT.msgs.filter((m) => !String(m.id).startsWith("tmp"));
+    input.value = text;
+    renderBot();
+    botNote(`⚠️ ${err.message}`);
+  } finally { BOT.sending = false; }
+});
+$("#botInput")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#botForm").requestSubmit(); }
+});
+
+// 지식 그래프: 간단한 힘 배치(외부 라이브러리 없이)
+const KG_COLORS = { Person: "#60a5fa", Project: "#f59e0b", Task: "#10b981", Deadline: "#ef4444", Decision: "#a855f7", Date: "#94a3b8", Topic: "#ec4899" };
+const KG_NAMES = { Person: "사람", Project: "프로젝트", Task: "업무", Deadline: "마감", Decision: "결정", Date: "날짜", Topic: "주제" };
+function layoutKG(nodes, edges, W, H) {
+  const idx = new Map(nodes.map((n, i) => [n.id, i]));
+  const P = nodes.map((n, i) => ({ x: W / 2 + Math.cos(i * 2.4) * (60 + i * 6), y: H / 2 + Math.sin(i * 2.4) * (60 + i * 6), vx: 0, vy: 0 }));
+  const E = edges.map((e) => [idx.get(e.src), idx.get(e.dst)]).filter(([a, b]) => a != null && b != null);
+  for (let it = 0; it < 260; it++) {
+    const t = 1 - it / 260;
+    for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+      const dx = P[i].x - P[j].x, dy = P[i].y - P[j].y, d2 = Math.max(dx * dx + dy * dy, 25), f = 2600 / d2;
+      const d = Math.sqrt(d2); P[i].vx += (dx / d) * f; P[i].vy += (dy / d) * f; P[j].vx -= (dx / d) * f; P[j].vy -= (dy / d) * f;
+    }
+    for (const [a, b] of E) {
+      const dx = P[b].x - P[a].x, dy = P[b].y - P[a].y, d = Math.max(Math.hypot(dx, dy), 1), f = (d - 90) * 0.02;
+      P[a].vx += (dx / d) * f; P[a].vy += (dy / d) * f; P[b].vx -= (dx / d) * f; P[b].vy -= (dy / d) * f;
+    }
+    for (const p of P) { p.vx += (W / 2 - p.x) * 0.004; p.vy += (H / 2 - p.y) * 0.004; p.x += Math.max(-12, Math.min(12, p.vx * t)); p.y += Math.max(-12, Math.min(12, p.vy * t)); p.vx *= 0.5; p.vy *= 0.5; p.x = Math.max(30, Math.min(W - 30, p.x)); p.y = Math.max(20, Math.min(H - 20, p.y)); }
+  }
+  // 화면에 꽉 차게 맞춘다
+  const xs = P.map((p) => p.x), ys = P.map((p) => p.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const k = Math.min((W - 120) / Math.max(x1 - x0, 1), (H - 70) / Math.max(y1 - y0, 1), 3);
+  for (const p of P) { p.x = W / 2 + (p.x - (x0 + x1) / 2) * k; p.y = H / 2 - 8 + (p.y - (y0 + y1) / 2) * k; }
+  return { P, E };
+}
+$("#kgBtn")?.addEventListener("click", async () => {
+  openDialog("🧠 지식 그래프 (메모리)", `<p class="empty">불러오는 중…</p>`);
+  const g = await loadKGCount();
+  if (!g) { $("#dialogBody").innerHTML = `<p class="empty">불러오지 못했어요.</p>`; return; }
+  const nodes = [...g.nodes].sort((a, b) => (b.mentions || 0) - (a.mentions || 0)).slice(0, 80);
+  const keep = new Set(nodes.map((n) => n.id));
+  const edges = g.edges.filter((e) => keep.has(e.src) && keep.has(e.dst));
+  const W = 840, H = 560;
+  const { P, E } = layoutKG(nodes, edges, W, H);
+  const types = [...new Set(nodes.map((n) => n.type))];
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="지식 그래프">
+    ${E.map(([a, b]) => `<line x1="${P[a].x.toFixed(1)}" y1="${P[a].y.toFixed(1)}" x2="${P[b].x.toFixed(1)}" y2="${P[b].y.toFixed(1)}" stroke="#334155" stroke-width="1"/>`).join("")}
+    ${nodes.map((n, i) => { const r = 5 + Math.min(9, (n.mentions || 0) * 1.5) + (n.type === "Person" || n.type === "Project" ? 3 : 0); const lb = n.label.length > 14 ? n.label.slice(0, 14) + "…" : n.label; return `<g><title>${esc(KG_NAMES[n.type] || n.type)} · ${esc(n.label)}${n.mentions ? ` (언급 ${n.mentions})` : ""}</title><circle cx="${P[i].x.toFixed(1)}" cy="${P[i].y.toFixed(1)}" r="${r}" fill="${KG_COLORS[n.type] || "#94a3b8"}" stroke="#0b1020" stroke-width="1.5"/><text x="${P[i].x.toFixed(1)}" y="${(P[i].y + r + 11).toFixed(1)}" text-anchor="middle" font-size="10.5" fill="#e2e8f0">${esc(lb)}</text></g>`; }).join("")}
+  </svg>`;
+  $("#dialogBody").innerHTML = `<div class="kg-wrap">${svg}<div class="kg-legend">${types.map((t) => `<span><i style="background:${KG_COLORS[t] || "#94a3b8"}"></i>${esc(KG_NAMES[t] || t)}</span>`).join("")}</div><p class="small muted">노드 ${g.nodes.length}개 · 관계 ${g.edges.length}개${g.nodes.length > 80 ? " (많이 언급된 80개만 표시)" : ""}. 대화창에 남긴 말과 지피 답이 쌓일수록 커져요.</p></div>`;
+});

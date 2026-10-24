@@ -111,6 +111,7 @@
 
     <!-- ── 3D 타워 ── -->
     <section class="view" id="view-office" data-view="office" aria-label="3D 타워" hidden>
+      <div class="office-layout">
       <div class="office3d" id="office3d">
         <div class="hud">
           <div class="floor-switch" id="floorSwitch" role="group" aria-label="층 선택"></div>
@@ -139,6 +140,19 @@
           <span class="office-what" id="officeWhat"></span>
           <button type="button" id="officeNow" hidden>지금으로</button>
         </div>
+      </div>
+      <aside class="card bot-panel" id="botPanel" aria-label="지피와 대화">
+        <div class="bot-head">
+          <h2>💬 지피와 대화</h2>
+          <button type="button" class="btn-ghost sm" id="kgBtn" title="대화가 쌓이며 만들어지는 지식 그래프(메모리)">🧠 지식 그래프 <span id="kgCount"></span></button>
+        </div>
+        <div class="bot-list" id="botList"><p class="empty">불러오는 중…</p></div>
+        <form class="bot-form" id="botForm" autocomplete="off">
+          <textarea id="botInput" rows="2" maxlength="1000" placeholder="지피에게 묻거나 기억할 내용 남기기 (Enter 보내기)"></textarea>
+          <button type="submit" class="btn-primary">보내기</button>
+        </form>
+        <p class="small muted bot-note">빠른 답은 단톡방 기록에서 바로 나오고, 지피가 확인한 답은 이어서 달려요. 남긴 말은 DB에 쌓여 지식 그래프가 됩니다.</p>
+      </aside>
       </div>
       <div class="legend office-legend">
         <span><i class="state-dot" data-state="present"></i>자리</span>

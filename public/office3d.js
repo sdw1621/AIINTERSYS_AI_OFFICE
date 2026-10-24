@@ -1340,6 +1340,12 @@ export class Office3D {
     a.bubbleEl.textContent = rest.join("|");
   }
 
+  // 앱에서 id로 잠깐 말하게 하기 (대화창 빠른 답)
+  speak(id, text, seconds = 6) {
+    const a = this.agents.get(id);
+    if (a) this.say(a, text, seconds);
+  }
+
   say(a, text, seconds = 5) {
     a.sayText = text;
     a.sayUntil = a.lastT + seconds;

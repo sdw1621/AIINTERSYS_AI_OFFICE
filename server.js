@@ -4,7 +4,8 @@ import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { PEOPLE, publicProjects } from "./src/projects.js";
 import { getEvents, calendarConfigured } from "./src/calendar.js";
-import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights } from "./src/db.js";
+import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgCount } from "./src/db.js";
+import { seedGraph, extractFromText } from "./src/kg.js";
 import { parseKakao } from "./src/chat.js";
 import { meetingScript, answer, llmEnabled } from "./src/meeting.js";
 
@@ -161,6 +162,64 @@ app.post("/api/meeting/ask", requireCode, requireDb, async (req, res) => {
     const seen = new Set();
     const messages = [...recent, ...dayMsgs].filter((m) => !seen.has(m.t + m.text) && seen.add(m.t + m.text)).sort((a, b) => a.t.localeCompare(b.t));
     res.json(await answer(q, messages, insights));
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+
+// ── 지피 대화창: 메시지 → DB 적재 + 지식 그래프 누적 → 빠른 답(단톡방 기록) + 지피 답(나중에) ──
+async function ensureSeed() {
+  if ((await kgCount()) > 0) return;
+  const g = seedGraph(await getInsights("kriso"));
+  await upsertKG(g.nodes, g.edges);
+}
+app.get("/api/bot", requireCode, requireDb, async (req, res) => {
+  try {
+    const after = Math.max(0, Number(req.query.after) || 0);
+    res.json({ messages: await listBot({ after }), llm: llmEnabled });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.post("/api/bot", requireCode, requireDb, async (req, res) => {
+  const text = String(req.body?.text || "").trim().slice(0, 1000);
+  if (!text) return res.status(400).json({ error: "메시지가 비어 있어요." });
+  try {
+    await ensureSeed();
+    const mine = await addBot({ role: "user", who: "shin", text, status: "pending" });
+    const known = (await getKG()).nodes;
+    const g = extractFromText(text, known);
+    g.nodes.push({ id: "person:shin", label: "신동욱", type: "Person", mention: false });
+    for (const n of g.nodes) if (n.id !== "person:shin") g.edges.push({ src: "person:shin", rel: "ASKED_ABOUT", dst: n.id });
+    await upsertKG(g.nodes, g.edges, mine.id);
+    // 빠른 답: 단톡방 기록·업무 보드에서 찾은 것 (LLM이 연결돼 있으면 LLM 답)
+    const [recent, insights] = await Promise.all([listChat("kriso", { limit: 200 }), getInsights("kriso")]);
+    const a = await answer(text, recent, insights);
+    const kind = a.source === "llm" ? "answer" : "quick";
+    await addBot({ role: "bot", who: a.source === "llm" ? "jipi" : a.who, text: a.text, kind, replyTo: mine.id });
+    res.json({ ok: true, id: mine.id, linked: g.nodes.filter((n) => n.mention).map((n) => n.label) });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+// 지피(또는 로컬 LLM 작업자)가 답과 새 지식을 올리는 곳
+app.post("/api/bot/answer", requireCodeOrImportKey, requireDb, async (req, res) => {
+  const replyTo = Number(req.body?.reply_to) || null;
+  const text = String(req.body?.text || "").trim().slice(0, 4000);
+  if (!text) return res.status(400).json({ error: "답이 비어 있어요." });
+  try {
+    const r = await addBot({ role: "bot", who: "jipi", text, kind: "answer", replyTo });
+    const kg = req.body?.kg || {};
+    await upsertKG(Array.isArray(kg.nodes) ? kg.nodes : [], Array.isArray(kg.edges) ? kg.edges : [], replyTo);
+    res.json({ ok: true, id: r.id });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+app.get("/api/kg", requireCode, requireDb, async (_req, res) => {
+  try {
+    await ensureSeed();
+    res.json(await getKG());
   } catch (err) {
     dbError(res, err);
   }
