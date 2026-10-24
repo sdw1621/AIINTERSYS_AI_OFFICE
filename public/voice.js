@@ -156,6 +156,7 @@ function voiceFor(gender, index = 0) {
   return pool.length ? pool[index % pool.length] : null;
 }
 
+let speakGen = 0; // stopSpeaking() 이 불리면 올라가서, 말하던 줄을 바로 끝낸다
 // 다 읽으면 끝나는 Promise. 음성이 없거나 막히면 글자 수만큼 기다렸다 끝낸다.
 export function speakAs(person, text, { index = 0 } = {}) {
   const fallback = Math.min(9000, 1200 + text.length * 85);
@@ -166,6 +167,8 @@ export function speakAs(person, text, { index = 0 } = {}) {
       done = true;
       resolve();
     };
+    const gen = speakGen;
+    const cut = () => (gen !== speakGen ? (finish(), true) : false);
     if (!voiceSupported()) return setTimeout(finish, fallback);
     const u = new SpeechSynthesisUtterance(text.replace(/[📌☕🎮📖💡📝🖨️👍📈🔍]/gu, ""));
     const v = person?.voice || {};
@@ -173,13 +176,16 @@ export function speakAs(person, text, { index = 0 } = {}) {
     u.voice = voiceFor(v.gender, index);
     u.pitch = v.pitch ?? 1;
     u.rate = v.rate ?? 1;
-    u.onend = finish;
-    u.onerror = finish;
+    const started = Date.now();
+    // 음성이 없거나 막혀 바로 끝나 버리면, 말풍선을 읽을 시간만큼은 기다린다
+    u.onend = () => cut() || setTimeout(finish, Math.max(0, Math.min(fallback, text.length * 45) - (Date.now() - started)));
+    u.onerror = () => cut() || setTimeout(finish, Math.max(0, fallback - (Date.now() - started)));
     window.speechSynthesis.speak(u);
     setTimeout(finish, fallback + 4000); // onend가 오지 않는 브라우저 대비
   });
 }
 
 export function stopSpeaking() {
+  speakGen++;
   window.speechSynthesis?.cancel();
 }

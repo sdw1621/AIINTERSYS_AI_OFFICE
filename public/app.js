@@ -786,12 +786,13 @@ async function startMeeting(day) {
   $("#officeWhen").textContent = `${md(d)}(${wd(d)}) AI 회의${data.source === "llm" ? " · LLM" : ""}`;
   $("#officeWhat").textContent = "모두 회의 테이블로 모이는 중…";
   const members = kriso.members.map((m) => m.id);
-  await Promise.all(members.map((id, k) => {
+  const gather = Promise.all(members.map((id, k) => {
     office.hideBubble(id);
     office.setState(id, "moving");
     return office.moveTo(id, { floor: kriso.floor, kind: "meeting", slot: k }).then(() => office.setState(id, "present"));
   }));
-  runMeeting();
+  await Promise.race([gather, new Promise((r) => setTimeout(r, 6000))]); // 늦게 오는 사람은 걸어오는 동안 회의 시작
+  if (S.meeting) runMeeting();
 }
 
 async function runMeeting() {
