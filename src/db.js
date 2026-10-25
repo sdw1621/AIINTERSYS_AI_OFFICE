@@ -315,3 +315,46 @@ export async function kgCount() {
   const [{ n }] = await sql`SELECT count(*)::int AS n FROM office_kg_nodes`;
   return n;
 }
+
+// ── 단톡방 자료 이력 (구글 드라이브 자료실과 연결) ──
+let filesReady = null;
+function ensureFiles() {
+  filesReady ??= (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS office_files (
+        id BIGSERIAL PRIMARY KEY, room TEXT NOT NULL DEFAULT 'kriso', t TIMESTAMPTZ NOT NULL, who TEXT, person TEXT, name TEXT NOT NULL,
+        family TEXT, version INT NOT NULL DEFAULT 0, latest BOOLEAN NOT NULL DEFAULT false, category TEXT NOT NULL DEFAULT 'etc',
+        junk BOOLEAN NOT NULL DEFAULT false, reshare BOOLEAN NOT NULL DEFAULT false,
+        status TEXT NOT NULL DEFAULT 'needed', drive_id TEXT, drive_url TEXT, drive_title TEXT, saved_at TIMESTAMPTZ, note TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(), UNIQUE (room, t, name))`;
+    await sql`CREATE TABLE IF NOT EXISTS office_drive_folders (room TEXT NOT NULL, category TEXT NOT NULL, folder_id TEXT NOT NULL, name TEXT, PRIMARY KEY (room, category))`;
+  })().catch((err) => { filesReady = null; throw err; });
+  return filesReady;
+}
+
+export async function listFiles(room = "kriso") {
+  await ensureFiles();
+  const rows = await sql`SELECT id, t, who, person, name, status, drive_id, drive_url, drive_title, saved_at, note FROM office_files WHERE room = ${room} ORDER BY t, id`;
+  return rows.map((r) => ({ ...r, id: Number(r.id), t: new Date(r.t).toISOString(), saved_at: r.saved_at && new Date(r.saved_at).toISOString() }));
+}
+
+export async function driveFolders() {
+  await ensureFiles();
+  return sql`SELECT room, category, folder_id, name FROM office_drive_folders`;
+}
+
+// 카톡 대화를 새로 올리면 파일 메시지도 자료 이력에 쌓는다 (이미 있는 건 그대로)
+export async function addFiles(room, files) {
+  await ensureFiles();
+  if (!files.length) return 0;
+  const rows = await sql`
+    INSERT INTO office_files (room, t, who, person, name)
+    SELECT ${room}, x.t, x.who, x.person, x.name FROM jsonb_to_recordset(${JSON.stringify(files)}::jsonb) AS x(t timestamptz, who text, person text, name text)
+    ON CONFLICT (room, t, name) DO NOTHING RETURNING id`;
+  return rows.length;
+}
+
+export async function setFileDrive(id, { drive_id, drive_url, drive_title, note }) {
+  await ensureFiles();
+  await sql`UPDATE office_files SET status = 'saved', drive_id = ${drive_id}, drive_url = ${drive_url}, drive_title = ${drive_title || null}, note = ${note || null}, saved_at = now() WHERE id = ${id}`;
+}

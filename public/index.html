@@ -149,11 +149,17 @@
         </div>
         <div class="msgr-tabs" role="tablist">
           <button type="button" role="tab" data-mtab="kakao" class="on">💬 단톡방 <i id="kakaoBadge"></i></button>
+          <button type="button" role="tab" data-mtab="files">📁 자료 <i id="filesBadge"></i></button>
           <button type="button" role="tab" data-mtab="jipi">🤖 지피에게 묻기 <i id="jipiBadge"></i></button>
         </div>
         <div class="msgr-pane" data-pane="kakao">
           <div class="chat msgr-list" id="towerChat"><p class="empty">불러오는 중…</p></div>
           <p class="msgr-foot small muted" id="kakaoFoot">카카오톡 단톡방 원문이에요 (읽기 전용). 재생하면 여기서 한 줄씩 올라와요.</p>
+        </div>
+        <div class="msgr-pane" data-pane="files" hidden>
+          <div class="files-top" id="filesTop"></div>
+          <div class="files-cats" id="filesCats"></div>
+          <div class="files-list" id="filesList"><p class="empty">불러오는 중…</p></div>
         </div>
         <div class="msgr-pane" data-pane="jipi" hidden>
           <div class="chat msgr-list bot-list" id="botList"><p class="empty">불러오는 중…</p></div>

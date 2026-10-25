@@ -4,9 +4,10 @@ import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { PEOPLE, PROJECTS, publicProjects } from "./src/projects.js";
 import { getEvents, calendarConfigured } from "./src/calendar.js";
-import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgScopeCount, botProject } from "./src/db.js";
+import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgScopeCount, botProject, listFiles, driveFolders, addFiles, setFileDrive } from "./src/db.js";
 import { seedProject, extractFromText } from "./src/kg.js";
 import { quickAnswer } from "./src/bot.js";
+import { versionize, CATEGORIES, driveTitle } from "./src/files.js";
 import { parseKakao } from "./src/chat.js";
 import { meetingScript, answer, llmEnabled } from "./src/meeting.js";
 
@@ -128,7 +129,10 @@ app.post("/api/chat/import", requireCodeOrImportKey, requireDb, async (req, res)
   if (!messages.length) return res.status(400).json({ error: "카카오톡 대화 내보내기 형식이 아니에요." });
   try {
     const r = await importChat(room, messages);
-    res.json({ title, parsed: messages.length, ...r });
+    // 파일 메시지는 자료 이력에도 쌓는다 (드라이브 저장은 지피가 받은 파일함에서 정리)
+    const files = messages.filter((m) => m.kind === "file").map((m) => ({ t: m.t, who: m.who, person: m.person, name: m.text.replace(/^파일:\s*/, "").split("\n")[0] }));
+    const newFiles = await addFiles(room, files);
+    res.json({ title, parsed: messages.length, newFiles, ...r });
   } catch (err) {
     dbError(res, err);
   }
@@ -237,6 +241,43 @@ app.get("/api/kg", requireCode, requireDb, async (req, res) => {
   }
 });
 
+// ── 자료 이력: 단톡방 파일을 문서군·버전으로 묶어 보여 주고, 드라이브 자료실 링크를 붙인다 ──
+async function fileHistory(room) {
+  const [rows, folders] = await Promise.all([listFiles(room), driveFolders()]);
+  const v = versionize(rows);
+  const fams = new Map();
+  for (const r of v) {
+    if (r.junk) continue;
+    const f = fams.get(r.family) || { family: r.family, category: r.category, name: r.name, versions: [] };
+    f.versions.push({ id: r.id, v: r.version, t: r.t, who: NAMES[r.person] || (r.who || "").replace(/대표님|님/g, ""), person: r.person, name: r.name, reshare: r.reshare, status: r.status, url: r.drive_url, title: driveTitle(r, NAMES) });
+    f.name = r.name; // 최신 이름
+    f.last = r.t;
+    fams.set(r.family, f);
+  }
+  const fol = Object.fromEntries(folders.filter((x) => x.room === room || x.room === "*").map((x) => [x.category, `https://drive.google.com/drive/folders/${x.folder_id}`]));
+  const families = [...fams.values()].sort((a, b) => b.last.localeCompare(a.last));
+  const saved = v.filter((r) => r.status === "saved").length;
+  return { room, total: v.filter((r) => !r.junk).length, saved, families, categories: CATEGORIES.map((c) => ({ id: c.id, name: c.name, url: fol[c.id] || null })), folders: { root: fol.root || null, inbox: fol.inbox || null, floor: fol.floor || null } };
+}
+app.get("/api/files", requireCode, requireDb, async (req, res) => {
+  try {
+    res.json(await fileHistory(roomOf(req) || "kriso"));
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+// 지피(정리 작업)가 드라이브에 저장한 뒤 링크를 붙이는 곳
+app.post("/api/files/:id/drive", requireCodeOrImportKey, requireDb, async (req, res) => {
+  const { drive_id, drive_url, drive_title, note } = req.body || {};
+  if (!drive_id || !drive_url) return res.status(400).json({ error: "drive_id·drive_url이 필요해요." });
+  try {
+    await setFileDrive(Number(req.params.id), { drive_id, drive_url, drive_title, note });
+    res.json({ ok: true });
+  } catch (err) {
+    dbError(res, err);
+  }
+});
+
 // ── 구글 시트 연동: =IMPORTDATA("…/api/sheet/<탭>.csv?key=…") 로 시트가 직접 읽어 간다 ──
 const SHEET_KEY = process.env.SHEET_EXPORT_KEY || "";
 const csv = (rows) => rows.map((r) => r.map((v) => {
@@ -274,6 +315,13 @@ app.get("/api/sheet/:tab.csv", async (req, res) => {
       case "decisions":
         rows = [["날짜", "결정"], ...(ins.decisions || []).map((d) => [dayK(d.date), d.text])];
         break;
+      case "files": {
+        const h = await fileHistory(room);
+        const cat = Object.fromEntries(h.categories.map((c) => [c.id, c.name.replace(/^\d+\s*/, "")]));
+        rows = [["분류", "문서", "버전", "최신", "날짜", "올린 사람", "파일 이름", "드라이브", "링크"]];
+        for (const f of h.families) for (const x of [...f.versions].reverse()) rows.push([cat[f.category] || f.category, f.name, `v${x.v}${x.reshare ? " (재공유)" : ""}`, x.v === Math.max(...f.versions.map((y) => y.v)) ? "★" : "", stampK(new Date(Date.parse(x.t) + 9 * 3600e3).toISOString().slice(0, 16)), x.who, x.name, x.status === "saved" ? "저장됨" : "파일 필요", x.url || ""]);
+        break;
+      }
       case "milestones":
         rows = [["날짜", "내용"], ...(ins.milestones || []).map((d) => [dayK(d.date), d.text])];
         break;

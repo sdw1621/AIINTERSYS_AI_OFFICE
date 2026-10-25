@@ -635,7 +635,11 @@ function chatAvatar(m) {
   return `<span class="ch-ini">${esc((m.who || "?").replace(/대표님|님/g, "").slice(0, 2))}</span>`;
 }
 function chatBody(m) {
-  if (m.kind === "file") return `<span class="ch-file">📎 ${esc(m.text.replace(/^파일: /, ""))}</span>`;
+  if (m.kind === "file") {
+    const nm = m.text.replace(/^파일: /, "");
+    const hit = FILES?.data?.families.flatMap((f) => f.versions).find((x) => x.name === nm && Math.abs(Date.parse(x.t) - Date.parse(m.t)) < 120_000);
+    return `<span class="ch-file">📎 ${esc(nm)}</span>${hit ? `<br><small>${hit.status === "saved" && hit.url ? `<a href="${esc(hit.url)}" target="_blank" rel="noopener">드라이브 v${hit.v} ↗</a>` : `v${hit.v} · ⏳ 드라이브 저장 전`}</small>` : ""}`;
+  }
   if (m.kind === "photo") return `<span class="ch-muted">🖼️ 사진</span>`;
   if (m.kind === "deleted") return `<span class="ch-muted">삭제된 메시지</span>`;
   if (m.kind === "link") return `<a href="${esc(m.text)}" target="_blank" rel="noopener noreferrer">🔗 ${esc(m.text.length > 60 ? m.text.slice(0, 60) + "…" : m.text)}</a>`;
@@ -991,6 +995,7 @@ function setMsgrTab(tab) {
   MSGR.tab = tab;
   for (const b of $$("[data-mtab]")) b.classList.toggle("on", b.dataset.mtab === tab);
   for (const p of $$(".msgr-pane")) p.hidden = p.dataset.pane !== tab;
+  if (tab === "files") loadFiles();
   if (tab === "jipi") { $("#jipiBadge").textContent = ""; const l = $("#botList"); l.scrollTop = l.scrollHeight; }
   else { const l = $("#towerChat"); l.scrollTop = l.scrollHeight; }
 }
@@ -1026,6 +1031,44 @@ function renderTowerChat() {
   box.innerHTML = list.length ? chatLines(list) : `<p class="empty">아직 쌓인 대화가 없어요. 모니터링 탭에서 카톡 대화 파일을 올려 주세요.</p>`;
   box.scrollTop = box.scrollHeight;
 }
+// 📁 자료: 단톡방에 올라온 파일을 문서군·버전으로 묶어 보여 주고, 드라이브 자료실 링크를 붙인다
+const FILES = { data: null, cat: "all", at: 0 };
+const FILE_IC = { hwpx: "📄", hwp: "📄", docx: "📄", pdf: "📕", pptx: "📊", ppt: "📊", xlsx: "📗", xls: "📗", csv: "📗", m4a: "🎙️", mp3: "🎙️", zip: "🗜️", html: "🌐", svg: "🖼️", png: "🖼️", jpg: "🖼️" };
+const extOf = (n) => (n.match(/\.([a-z0-9]{1,6})$/i)?.[1] || "").toLowerCase();
+async function loadFiles(force = false) {
+  if (!hasKakao(BOT.scope)) { $("#filesTop").innerHTML = ""; $("#filesCats").innerHTML = ""; $("#filesList").innerHTML = `<p class="empty">이 층은 아직 연결된 단톡방 자료가 없어요.</p>`; return; }
+  if (!force && FILES.data && Date.now() - FILES.at < 60_000) return renderFiles();
+  try { FILES.data = await api("/api/files"); FILES.at = Date.now(); renderFiles(); }
+  catch (err) { $("#filesList").innerHTML = `<p class="empty">${esc(err.message)}</p>`; }
+}
+function renderFiles() {
+  const d = FILES.data;
+  if (!d) return;
+  const pct = d.total ? Math.round((d.saved / d.total) * 100) : 0;
+  $("#filesTop").innerHTML = `<b>단톡방 자료 ${d.total}건</b><span>문서 ${d.families.length}종 · 드라이브 저장 ${d.saved}건 (${pct}%)</span>
+    <span class="bar"><i style="width:${pct}%"></i></span>
+    ${d.folders.floor ? `<a href="${esc(d.folders.floor)}" target="_blank" rel="noopener">📂 드라이브 자료실</a>` : ""}
+    ${d.folders.inbox ? `<a href="${esc(d.folders.inbox)}" target="_blank" rel="noopener" title="카톡에서 받은 파일을 여기에 넣으면 지피가 분류·버전 이름을 붙여 정리해요">📥 받은 파일함에 넣기</a>` : ""}`;
+  const counts = {};
+  for (const f of d.families) counts[f.category] = (counts[f.category] || 0) + 1;
+  $("#filesCats").innerHTML = `<button type="button" data-fcat="all" class="${FILES.cat === "all" ? "on" : ""}">전체 ${d.families.length}</button>` +
+    d.categories.filter((c) => counts[c.id]).map((c) => `<button type="button" data-fcat="${c.id}" class="${FILES.cat === c.id ? "on" : ""}">${esc(c.name.replace(/^\d+\s*/, ""))} ${counts[c.id]}</button>`).join("");
+  const list = d.families.filter((f) => FILES.cat === "all" || f.category === FILES.cat);
+  $("#filesList").innerHTML = list.map((f) => {
+    const vs = [...f.versions].reverse();
+    const top = Math.max(...f.versions.map((x) => x.v));
+    const multi = new Set(f.versions.map((x) => x.v)).size > 1;
+    const savedN = f.versions.filter((x) => x.status === "saved").length;
+    const last = vs[0];
+    const when = (t) => { const ms = Date.parse(t); return `${md(ms)}(${wd(ms)}) ${hm(ms)}`; };
+    return `<details class="fam"${multi && FILES.cat !== "all" ? " open" : ""}>
+      <summary><span class="ic">${FILE_IC[extOf(f.name)] || "📎"}</span><span class="nm">${esc(f.name)}<small>${esc(last.who)} · ${when(last.t)}${savedN ? ` · ✅ ${savedN}/${f.versions.length}` : " · ⏳ 드라이브에 아직 없음"}</small></span>${multi ? `<span class="vc">v${top}</span>` : ""}</summary>
+      <ol>${vs.map((x) => `<li class="${x.v === top ? "top" : ""}"><span class="v">v${x.v}</span><span>${when(x.t)} · ${esc(x.who)}${x.reshare ? " <em>(재공유)</em>" : ""}</span>${x.name !== f.name ? `<em>${esc(x.name)}</em>` : ""}${x.status === "saved" && x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">드라이브 ↗</a>` : `<span class="st need">⏳ 파일 필요</span>`}</li>`).join("")}</ol>
+    </details>`;
+  }).join("") || `<p class="empty">이 분류에는 자료가 없어요.</p>`;
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-fcat]"); if (b) { FILES.cat = b.dataset.fcat; renderFiles(); } });
+
 // 재생·회의 중에는 오른쪽 단톡방에 한 줄씩 올라온다
 function msgrLiveStart() { MSGR.live = []; setMsgrTab("kakao"); renderTowerChat(); }
 function msgrLivePush(m) { if (!MSGR.live) return; MSGR.live.push(m); renderTowerChat(); }
@@ -1099,6 +1142,7 @@ async function loadKGCount() {
 
 function startBot() {
   renderTowerChat();
+  loadFiles().then(() => !S.replay && renderTowerChat());
   if (BOT.timer) return;
   pollBot(); loadKGCount();
   BOT.timer = setInterval(pollBot, 10_000);
