@@ -4,7 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { PEOPLE, PROJECTS, publicProjects } from "./src/projects.js";
 import { getEvents, calendarConfigured } from "./src/calendar.js";
-import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgScopeCount, botProject, listFiles, driveFolders, addFiles, setFileDrive } from "./src/db.js";
+import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgScopeCount, botProject, listFiles, driveFolders, addFiles, setFileDrive, saveFileVersions } from "./src/db.js";
 import { seedProject, extractFromText } from "./src/kg.js";
 import { quickAnswer } from "./src/bot.js";
 import { versionize, CATEGORIES, driveTitle } from "./src/files.js";
@@ -245,6 +245,8 @@ app.get("/api/kg", requireCode, requireDb, async (req, res) => {
 async function fileHistory(room) {
   const [rows, folders] = await Promise.all([listFiles(room), driveFolders()]);
   const v = versionize(rows);
+  const changed = v.filter((r) => r.db_family !== (r.family ?? null) || r.db_version !== r.version || r.db_latest !== Boolean(r.latest) || r.db_category !== r.category);
+  if (changed.length) await saveFileVersions(changed.map((r) => ({ id: r.id, family: r.family, version: r.version, latest: Boolean(r.latest), category: r.category, junk: Boolean(r.junk), reshare: Boolean(r.reshare) })));
   const fams = new Map();
   for (const r of v) {
     if (r.junk) continue;

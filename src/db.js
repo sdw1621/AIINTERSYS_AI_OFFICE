@@ -334,7 +334,7 @@ function ensureFiles() {
 
 export async function listFiles(room = "kriso") {
   await ensureFiles();
-  const rows = await sql`SELECT id, t, who, person, name, status, drive_id, drive_url, drive_title, saved_at, note FROM office_files WHERE room = ${room} ORDER BY t, id`;
+  const rows = await sql`SELECT id, t, who, person, name, family AS db_family, version AS db_version, latest AS db_latest, category AS db_category, status, drive_id, drive_url, drive_title, saved_at, note FROM office_files WHERE room = ${room} ORDER BY t, id`;
   return rows.map((r) => ({ ...r, id: Number(r.id), t: new Date(r.t).toISOString(), saved_at: r.saved_at && new Date(r.saved_at).toISOString() }));
 }
 
@@ -357,4 +357,14 @@ export async function addFiles(room, files) {
 export async function setFileDrive(id, { drive_id, drive_url, drive_title, note }) {
   await ensureFiles();
   await sql`UPDATE office_files SET status = 'saved', drive_id = ${drive_id}, drive_url = ${drive_url}, drive_title = ${drive_title || null}, note = ${note || null}, saved_at = now() WHERE id = ${id}`;
+}
+
+// 서버가 계산한 문서군·버전을 DB에도 적어 둔다 (정리 작업이 SQL만으로 버전 이름을 붙일 수 있게)
+export async function saveFileVersions(list) {
+  await ensureFiles();
+  if (!list.length) return;
+  await sql`
+    UPDATE office_files f SET family = x.family, version = x.version, latest = x.latest, category = x.category, junk = x.junk, reshare = x.reshare
+    FROM jsonb_to_recordset(${JSON.stringify(list)}::jsonb) AS x(id bigint, family text, version int, latest boolean, category text, junk boolean, reshare boolean)
+    WHERE f.id = x.id`;
 }
