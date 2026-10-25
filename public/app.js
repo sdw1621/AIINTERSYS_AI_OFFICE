@@ -621,6 +621,7 @@ async function loadChat() {
   }
   mergeDeadlines();
   renderChat();
+  if (!S.replay) renderTowerChat();
   renderBoard();
   renderKpis();
   renderProjects();
@@ -641,6 +642,21 @@ function chatBody(m) {
   const t = m.text.length > 400 ? m.text.slice(0, 400) + "…" : m.text;
   return esc(t);
 }
+// 카톡 말풍선 줄들 (모니터링 카드와 타워 오른쪽 메신저가 같이 쓴다)
+function chatLines(list, { liveLast = false } = {}) {
+  let lastDay = "";
+  return list.map((m, i) => {
+    const ms = Date.parse(m.t);
+    const day = ymdK(ms);
+    const sep = day !== lastDay ? `<div class="ch-day">${md(ms)}(${wd(ms)})</div>` : "";
+    lastDay = day;
+    if (m.kind === "system") return `${sep}<div class="ch-sys">${esc(m.text)}</div>`;
+    const mine = m.person === "shin";
+    const cls = `ch-msg${mine ? " mine" : ""}${m.meet ? " ch-meet" : ""}${liveLast && i === list.length - 1 ? " live" : ""}`;
+    return `${sep}<div class="${cls}">${mine ? "" : `<div class="ch-av">${chatAvatar(m)}</div>`}<div class="ch-col">${mine ? "" : `<b class="ch-who">${esc(S.people[m.person]?.name || m.who)}</b>`}<div class="ch-row"><div class="ch-bub">${chatBody(m)}</div><time>${hm(ms)}</time></div></div></div>`;
+  }).join("");
+}
+
 function renderChat() {
   const card = $("#chatCard");
   card.hidden = false;
@@ -655,16 +671,7 @@ function renderChat() {
     box.innerHTML = `<p class="empty">아직 쌓인 대화가 없어요. 카카오톡에서 대화 내보내기 한 .txt 파일을 올려 주세요.</p>`;
     return;
   }
-  let lastDay = "";
-  box.innerHTML = `<button type="button" class="link-btn ch-more" id="chatMore">이전 대화 더 보기</button>` + list.map((m) => {
-    const ms = Date.parse(m.t);
-    const day = ymdK(ms);
-    const sep = day !== lastDay ? `<div class="ch-day">${md(ms)}(${wd(ms)})</div>` : "";
-    lastDay = day;
-    if (m.kind === "system") return `${sep}<div class="ch-sys">${esc(m.text)}</div>`;
-    const mine = m.person === "shin";
-    return `${sep}<div class="ch-msg${mine ? " mine" : ""}">${mine ? "" : `<div class="ch-av">${chatAvatar(m)}</div>`}<div class="ch-col">${mine ? "" : `<b class="ch-who">${esc(S.people[m.person]?.name || m.who)}</b>`}<div class="ch-row"><div class="ch-bub">${chatBody(m)}</div><time>${hm(ms)}</time></div></div></div>`;
-  }).join("");
+  box.innerHTML = `<button type="button" class="link-btn ch-more" id="chatMore">이전 대화 더 보기</button>` + chatLines(list);
   box.scrollTop = box.scrollHeight;
   $("#chatMore").onclick = async () => {
     try {
@@ -788,6 +795,7 @@ async function startMeeting(day) {
   const d = Date.parse(day + "T00:00:00+09:00");
   $("#officeWhen").textContent = `${md(d)}(${wd(d)}) AI 회의${data.source === "llm" ? " · LLM" : ""}`;
   $("#officeWhat").textContent = "모두 회의 테이블로 모이는 중…";
+  msgrLiveStart();
   const members = kriso.members.map((m) => m.id);
   const gather = Promise.all(members.map((id, k) => {
     office.hideBubble(id);
@@ -813,6 +821,7 @@ async function runMeeting() {
     office.showBubble(who, line.human ? "human" : "say", line.text);
     office.setState(who, "meeting");
     $("#officeWhat").textContent = `${line.human ? "🙋 " : ""}${name}: ${line.text}`;
+    msgrLivePush({ t: new Date().toISOString(), person: who, who: name, kind: "text", text: line.text, meet: !line.human });
     await speakAs(S.people[who], line.text, { index: VOICE_IDX[who] || 0 });
     office.hideBubble(who);
     office.setState(who, "present");
@@ -839,6 +848,7 @@ function stopMeeting(finished = false) {
   $("#meetBtn").textContent = "🎙 AI 음성 회의";
   $("#replayBtn").disabled = false;
   $("#meetBar").hidden = true;
+  msgrLiveEnd();
   for (const id of Object.keys(S.people)) office?.hideBubble(id);
   if (finished && isVoiceEnabled()) announce("AI 음성 회의를 마쳤어요.", "done");
   syncOffice(false);
@@ -895,6 +905,7 @@ async function startReplay(day) {
   const d = Date.parse(day + "T00:00:00+09:00");
   $("#officeWhen").textContent = `${md(d)}(${wd(d)}) 단톡방`;
   if (isVoiceEnabled()) announce(`${md(d).replace("/", "월 ")}일 단톡방 대화 ${msgs.length}건을 재생할게요.`, "step");
+  msgrLiveStart();
   let i = 0;
   let last = null;
   const step = () => {
@@ -913,6 +924,7 @@ async function startReplay(day) {
       office.setState(who, "meeting");
     }
     last = who;
+    msgrLivePush(m);
     $("#officeWhat").textContent = `${hm(Date.parse(m.t))} ${S.people[m.person]?.name || m.who}: ${short}`;
     const dur = Math.min(4200, Math.max(1500, 900 + short.length * 38));
     S.replay.timer = setTimeout(step, dur);
@@ -925,6 +937,7 @@ function stopReplay(finished = false) {
   S.replay = null;
   office?.setAmbient(true);
   $("#replayBtn").textContent = "▶ 단톡방 대화 재생";
+  msgrLiveEnd();
   for (const id of Object.keys(S.people)) office?.hideBubble(id);
   if (finished && isVoiceEnabled()) announce("단톡방 대화 재생을 마쳤어요.", "done");
   syncOffice(false);
@@ -972,6 +985,52 @@ setupSound();
   start();
 })();
 
+// ═══════════ 오른쪽 메신저: 층 단톡방(카톡 원문) · 지피에게 묻기 ═══════════
+const MSGR = { tab: "kakao", live: null };
+function setMsgrTab(tab) {
+  MSGR.tab = tab;
+  for (const b of $$("[data-mtab]")) b.classList.toggle("on", b.dataset.mtab === tab);
+  for (const p of $$(".msgr-pane")) p.hidden = p.dataset.pane !== tab;
+  if (tab === "jipi") { $("#jipiBadge").textContent = ""; const l = $("#botList"); l.scrollTop = l.scrollHeight; }
+  else { const l = $("#towerChat"); l.scrollTop = l.scrollHeight; }
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-mtab]"); if (b) setMsgrTab(b.dataset.mtab); });
+const hasKakao = (scope) => scope === "kriso" || scope === "all";
+function paintMsgrHead() {
+  const p = S.projects?.find((x) => x.id === BOT.scope);
+  const av = $("#msgrAv");
+  if (!av) return;
+  const room = hasKakao(BOT.scope);
+  av.textContent = p ? p.short.slice(0, 2) : "AI";
+  av.style.setProperty("--c", p?.color || "#1e40af");
+  $("#msgrName").textContent = room ? (S.chat.insights?.title || "KRISO 단톡방") : p ? `${p.floor}F ${p.short}` : "AI 타워";
+  const n = S.byId?.kriso?.members.length || 4;
+  $("#msgrSub").textContent = room ? `카카오톡 · 멤버 ${n}명${BOT.scope === "all" ? " · 5F KRISO" : ""}` : "연결된 카톡 단톡방 없음 · 지피와 대화";
+}
+function renderTowerChat() {
+  const box = $("#towerChat");
+  if (!box) return;
+  paintMsgrHead();
+  if (MSGR.live) {
+    box.innerHTML = chatLines(MSGR.live, { liveLast: true }) || `<p class="empty">재생 준비 중…</p>`;
+    box.scrollTop = box.scrollHeight;
+    return;
+  }
+  if (!hasKakao(BOT.scope)) {
+    const p = S.projects?.find((x) => x.id === BOT.scope);
+    box.innerHTML = `<p class="empty" style="color:#334155">${esc(p?.short || "이 층")} 층은 아직 연결된 카톡 단톡방이 없어요.<br>궁금한 건 「🤖 지피에게 묻기」에서 이 층 지식으로 답해요.</p>`;
+    return;
+  }
+  if (S.chat.error) { box.innerHTML = `<p class="empty">${esc(S.chat.error)}</p>`; return; }
+  const list = S.chat.messages || [];
+  box.innerHTML = list.length ? chatLines(list) : `<p class="empty">아직 쌓인 대화가 없어요. 모니터링 탭에서 카톡 대화 파일을 올려 주세요.</p>`;
+  box.scrollTop = box.scrollHeight;
+}
+// 재생·회의 중에는 오른쪽 단톡방에 한 줄씩 올라온다
+function msgrLiveStart() { MSGR.live = []; setMsgrTab("kakao"); renderTowerChat(); }
+function msgrLivePush(m) { if (!MSGR.live) return; MSGR.live.push(m); renderTowerChat(); }
+function msgrLiveEnd() { MSGR.live = null; renderTowerChat(); }
+
 // ═══════════ 지피와 대화 · 지식 그래프 ═══════════
 const BOT = { msgs: [], last: 0, timer: null, sending: false, scope: "all" };
 // 층마다 대화·지식이 따로: 층을 고르면 그 층 대화로 바뀐다 (전체 타워 = 공통 대화)
@@ -986,6 +1045,8 @@ function setBotScope(scope) {
   const inp = $("#botInput");
   if (inp) inp.placeholder = p ? `${p.short}에 대해 묻거나 기억할 내용 남기기` : "층을 고르면 그 층 지식으로 답해요 · 전체 질문도 OK";
   $("#botList").innerHTML = `<p class="empty">불러오는 중…</p>`;
+  if (!MSGR.live) setMsgrTab(hasKakao(scope) ? "kakao" : "jipi");
+  renderTowerChat();
   if (BOT.timer) { pollBot(); loadKGCount(); }
 }
 function botNote(t) { const n = $(".bot-note"); if (!n) return; n.dataset.base ??= n.textContent; n.textContent = t; clearTimeout(botNote.t); botNote.t = setTimeout(() => (n.textContent = n.dataset.base), 6000); }
@@ -1024,6 +1085,7 @@ async function pollBot() {
       BOT.last = Math.max(BOT.last, ...BOT.msgs.map((m) => Number(m.id)));
       renderBot();
       // 새로 온 봇 답은 타워 캐릭터 말풍선으로도
+      if (MSGR.tab !== "jipi" && fresh.some((m) => m.kind === "answer")) $("#jipiBadge").textContent = String(fresh.filter((m) => m.kind === "answer").length);
       for (const m of fresh) if (m.role === "bot" && m.who !== "jipi" && office) office.speak?.(m.who, m.text.length > 40 ? m.text.slice(0, 40) + "…" : m.text, 6);
     } else if (!BOT.msgs.length) renderBot();
   } catch (err) {
@@ -1036,6 +1098,7 @@ async function loadKGCount() {
 }
 
 function startBot() {
+  renderTowerChat();
   if (BOT.timer) return;
   pollBot(); loadKGCount();
   BOT.timer = setInterval(pollBot, 10_000);

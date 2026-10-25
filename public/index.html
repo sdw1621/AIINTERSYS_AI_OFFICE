@@ -141,17 +141,29 @@
           <button type="button" id="officeNow" hidden>지금으로</button>
         </div>
       </div>
-      <aside class="card bot-panel" id="botPanel" aria-label="지피와 대화">
-        <div class="bot-head">
-          <h2>💬 지피와 대화 <span class="bot-scope" id="botScope">타워 전체</span></h2>
-          <button type="button" class="btn-ghost sm" id="kgBtn" title="대화가 쌓이며 만들어지는 지식 그래프(메모리)">🧠 지식 그래프 <span id="kgCount"></span></button>
+      <aside class="card bot-panel msgr" id="botPanel" aria-label="메신저">
+        <div class="msgr-head">
+          <span class="msgr-av" id="msgrAv">AI</span>
+          <div class="msgr-title"><b id="msgrName">AI 타워</b><small id="msgrSub">층을 고르면 그 층 방으로 바뀌어요</small></div>
+          <button type="button" class="btn-ghost sm" id="kgBtn" title="이 층 대화가 쌓이며 만들어지는 지식 그래프(메모리)">🧠 <span id="kgCount"></span></button>
         </div>
-        <div class="bot-list" id="botList"><p class="empty">불러오는 중…</p></div>
-        <form class="bot-form" id="botForm" autocomplete="off">
-          <textarea id="botInput" rows="2" maxlength="1000" placeholder="지피에게 묻거나 기억할 내용 남기기 (Enter 보내기)"></textarea>
-          <button type="submit" class="btn-primary">보내기</button>
-        </form>
-        <p class="small muted bot-note">빠른 답은 단톡방 기록에서 바로 나오고, 지피가 확인한 답은 이어서 달려요. 남긴 말은 DB에 쌓여 지식 그래프가 됩니다.</p>
+        <div class="msgr-tabs" role="tablist">
+          <button type="button" role="tab" data-mtab="kakao" class="on">💬 단톡방 <i id="kakaoBadge"></i></button>
+          <button type="button" role="tab" data-mtab="jipi">🤖 지피에게 묻기 <i id="jipiBadge"></i></button>
+        </div>
+        <div class="msgr-pane" data-pane="kakao">
+          <div class="chat msgr-list" id="towerChat"><p class="empty">불러오는 중…</p></div>
+          <p class="msgr-foot small muted" id="kakaoFoot">카카오톡 단톡방 원문이에요 (읽기 전용). 재생하면 여기서 한 줄씩 올라와요.</p>
+        </div>
+        <div class="msgr-pane" data-pane="jipi" hidden>
+          <div class="chat msgr-list bot-list" id="botList"><p class="empty">불러오는 중…</p></div>
+          <form class="bot-form" id="botForm" autocomplete="off">
+            <textarea id="botInput" rows="2" maxlength="1000" placeholder="지피에게 묻거나 기억할 내용 남기기 (Enter 보내기)"></textarea>
+            <button type="submit" class="btn-primary">보내기</button>
+          </form>
+          <p class="small muted bot-note">빠른 답은 이 층 기록에서 바로, 지피가 확인한 답은 이어서 달려요. 남긴 말은 이 층 지식 그래프가 돼요.</p>
+        </div>
+        <span class="bot-scope" id="botScope" hidden>타워 전체</span>
       </aside>
       </div>
       <div class="legend office-legend">
