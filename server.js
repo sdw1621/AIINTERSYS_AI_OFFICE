@@ -7,7 +7,7 @@ import { getEvents, calendarConfigured } from "./src/calendar.js";
 import { dbEnabled, listReports, getReport, deleteReport, importChat, listChat, chatDays, allChat, getInsights, listBot, addBot, upsertKG, getKG, kgScopeCount, botProject, listFiles, driveFolders, addFiles, setFileDrive, saveFileVersions } from "./src/db.js";
 import { seedProject, extractFromText } from "./src/kg.js";
 import { quickAnswer } from "./src/bot.js";
-import { versionize, CATEGORIES, driveTitle } from "./src/files.js";
+import { versionize, CATEGORIES, CATEGORY_ORDER, driveTitle } from "./src/files.js";
 import { parseKakao } from "./src/chat.js";
 import { meetingScript, answer, llmEnabled } from "./src/meeting.js";
 
@@ -259,7 +259,7 @@ async function fileHistory(room) {
   const fol = Object.fromEntries(folders.filter((x) => x.room === room || x.room === "*").map((x) => [x.category, `https://drive.google.com/drive/folders/${x.folder_id}`]));
   const families = [...fams.values()].sort((a, b) => b.last.localeCompare(a.last));
   const saved = v.filter((r) => r.status === "saved").length;
-  return { room, total: v.filter((r) => !r.junk).length, saved, families, categories: CATEGORIES.map((c) => ({ id: c.id, name: c.name, url: fol[c.id] || null })), folders: { root: fol.root || null, inbox: fol.inbox || null, floor: fol.floor || null } };
+  return { room, total: v.filter((r) => !r.junk).length, saved, families, categories: CATEGORY_ORDER.map((id) => CATEGORIES.find((c) => c.id === id)).map((c) => ({ id: c.id, name: c.name, url: fol[c.id] || null })), folders: { root: fol.root || null, inbox: fol.inbox || null, floor: fol.floor || null } };
 }
 app.get("/api/files", requireCode, requireDb, async (req, res) => {
   try {
