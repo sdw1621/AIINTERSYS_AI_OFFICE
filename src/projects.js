@@ -6,6 +6,8 @@ export const PEOPLE = {
   yang: { id: "yang", name: "양선희", title: "PM", color: "#0E7490", chatNames: ["모블양선희대표님", "양선희"], look: { hair: "long", hairColor: "#2a1d18", outfit: "#e8dccb", shirt: "#ffffff", pants: "#3b3b46" }, voice: { gender: "f", pitch: 1.1, rate: 1.0 } },
   leebu: { id: "leebu", name: "이부일", title: "미팅일정", color: "#0E7490", chatNames: ["이부일 대표님", "이부일"], look: { hair: "short", hairColor: "#22201e", outfit: "#5b7aa8", shirt: "#ffffff", pants: "#2b2f3a" }, voice: { gender: "m", pitch: 0.78, rate: 0.95 } },
   leejh: { id: "leejh", name: "이재현", title: "문서정리", color: "#0E7490", chatNames: ["이재현"], look: { hair: "short", hairColor: "#2c2420", outfit: "#7a8f6b", shirt: "#ffffff", pants: "#30343c" }, voice: { gender: "m", pitch: 1.12, rate: 1.1 } },
+  sohy: { id: "sohy", name: "손하영", title: "MES 관리", color: "#C2410C", chatNames: ["손하영"], look: { hair: "long", hairColor: "#2b1d15", outfit: "#f3d9c4", shirt: "#ffffff", pants: "#374151" }, voice: { gender: "f", pitch: 1.05, rate: 1.0 } },
+  kimkw: { id: "kimkw", name: "김경원", title: "R&D과제 연구 수행", color: "#15803D", chatNames: ["김경원"], look: { hair: "short", hairColor: "#1a1a1a", outfit: "#334155", shirt: "#ffffff", pants: "#1f2937", glasses: true }, voice: { gender: "m", pitch: 1.0, rate: 1.0 } },
 };
 
 const ULSAN_PBL = "울산 PBL · 클로드 코드 업무 자동화 구현 및 챗봇 (3주, 1일 4시간)";
@@ -31,7 +33,11 @@ export const PROJECTS = [
     title: "사출금형 및 자동차 내외장재 공정의 AX 기반 생산성 향상 및 업무효율화 기술 AI 역량 내재화",
     summary: ULSAN_PBL, partner: "인리치인재교육원", day: "매주 화요일",
     strategies: ["AI 기반 제조데이터 표준화 및 지식자산 관리", "AI 기반 3D STP 가공시간·원가 예측", "AI 기반 유사금형 검색 및 설계지식 추천"],
-    members: [{ id: "shin", role: "교수", duty: "PBL 강의 · AX 실행계획", desk: { x: 46, y: 26 } }],
+    members: [
+      { id: "shin", role: "교수", duty: "PBL 강의 · AX 실행계획", desk: { x: 46, y: 26 } },
+      { id: "sohy", role: "담당", duty: "MES 관리", desk: { x: 28, y: 26 } },
+      { id: "kimkw", role: "담당", duty: "R&D과제 연구 수행", desk: { x: 64, y: 26 } },
+    ],
     match: /한국몰드/,
   },
   {
